@@ -1,6 +1,6 @@
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
-# dependencies
+# Dependencies
 node_modules/
 
 # Expo
@@ -17,10 +17,10 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
-# Metro
+# Metro bundler
 .metro-health-check*
 
-# debug
+# Debug logs
 npm-debug.*
 yarn-debug.*
 yarn-error.*
@@ -29,10 +29,30 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# Environment variables
+.env
+.env.*
+!.env.example
 
-# typescript
+# TypeScript
 *.tsbuildinfo
 
-app-example
+# Build outputs
+build/
+ios/build/
+android/build/
+android/app/build/
+
+# Example code (if needed)
+app-example/
+
+# IDE and Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# These should NOT be in your .gitignore if you want them on GitHub
+# /src/components
+# /src/services
+# /src/types

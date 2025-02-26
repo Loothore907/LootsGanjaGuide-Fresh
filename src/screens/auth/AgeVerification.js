@@ -1,133 +1,117 @@
 // src/screens/auth/AgeVerification.js
 import React, { useState } from 'react';
-import { View, StyleSheet, Alert, ScrollView, Pressable } from 'react-native';
+import { View, StyleSheet, Image, BackHandler, Platform } from 'react-native';
 import { Text, Button } from '@rneui/themed';
 import { useAppState, AppActions } from '../../context/AppStateContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Logger, LogCategory } from '../../services/LoggingService';
+import { handleError, ErrorType, AppError, tryCatch } from '../../utils/ErrorHandler';
 
 const AgeVerification = ({ navigation }) => {
   const { dispatch } = useAppState();
-  const [month, setMonth] = useState(1);
-  const [day, setDay] = useState(1);
-  const [year, setYear] = useState(2000);
   const [isLoading, setIsLoading] = useState(false);
 
-  const calculateAge = (birthMonth, birthDay, birthYear) => {
-    const today = new Date();
-    let age = today.getFullYear() - birthYear;
-    const monthDiff = today.getMonth() + 1 - birthMonth;
-    
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDay)) {
-      age--;
-    }
-    
-    return age;
-  };
-
-  const handleVerification = async () => {
+  // Function to handle user confirming they are 21+
+  const handleConfirmAge = async () => {
     setIsLoading(true);
     try {
-      const age = calculateAge(month, day, year);
-      
-      if (age < 21) {
-        Alert.alert(
-          'Age Restriction',
-          'You must be 21 or older to use this application.',
-          [{ text: 'OK' }]
-        );
-        return;
-      }
-
-      const birthdate = new Date(year, month - 1, day).toISOString();
-      await AsyncStorage.setItem('isAgeVerified', 'true');
-      await AsyncStorage.setItem('birthdate', birthdate);
-      dispatch(AppActions.setAgeVerification(true));
+      await tryCatch(async () => {
+        // Store verification in AsyncStorage
+        await AsyncStorage.setItem('isAgeVerified', 'true');
+        
+        // Set today's date as verification date
+        const verificationDate = new Date().toISOString();
+        await AsyncStorage.setItem('ageVerificationDate', verificationDate);
+        
+        // Update global state
+        dispatch(AppActions.setAgeVerification(true));
+        
+        Logger.info(LogCategory.AUTH, 'User confirmed 21+ age verification');
+      }, LogCategory.AUTH, 'age verification confirmation', true);
     } catch (error) {
-      console.error('Age verification error:', error);
-      Alert.alert('Error', 'Failed to verify age. Please try again.');
+      // Error is already logged by tryCatch
+      // Just reset loading state
     } finally {
       setIsLoading(false);
     }
   };
 
-  const NumberSelector = ({ value, onChange, min, max, label }) => {
-    const increment = () => {
-      onChange(value < max ? value + 1 : value);
-    };
-
-    const decrement = () => {
-      onChange(value > min ? value - 1 : value);
-    };
-
-    return (
-      <View style={styles.selectorContainer}>
-        <Text style={styles.selectorLabel}>{label}</Text>
-        <View style={styles.selectorControls}>
-          <Pressable onPress={decrement} style={styles.selectorButton}>
-            <Text style={styles.selectorButtonText}>−</Text>
-          </Pressable>
-          <View style={styles.selectorValue}>
-            <Text style={styles.selectorValueText}>{value}</Text>
-          </View>
-          <Pressable onPress={increment} style={styles.selectorButton}>
-            <Text style={styles.selectorButtonText}>+</Text>
-          </Pressable>
-        </View>
-      </View>
+  // Function to handle user denying they are 21+
+  const handleDenyAge = () => {
+    Logger.info(LogCategory.AUTH, 'User denied 21+ age verification, closing app');
+    
+    // Show message and exit app
+    Alert.alert(
+      'Age Restriction',
+      'You must be 21 or older to use this application. The app will now close.',
+      [
+        { 
+          text: 'OK', 
+          onPress: () => {
+            // Exit the app
+            if (Platform.OS === 'android') {
+              BackHandler.exitApp();
+            } else {
+              // On iOS we can't force close, so just show another message
+              Alert.alert(
+                'Please close the app',
+                'This app is only for users 21 and older.'
+              );
+            }
+          }
+        }
+      ],
+      { cancelable: false }
     );
   };
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.contentContainer}>
+      <View style={styles.contentContainer}>
+        <Image 
+          source={require('../../../assets/images/logo.png')} 
+          style={styles.logo}
+          resizeMode="contain"
+        />
+        
         <Text h3 style={styles.title}>Age Verification</Text>
-        <Text style={styles.subtitle}>
-          You must be 21 or older to use this application.
-          Please verify your age to continue.
+        
+        <Text style={styles.description}>
+          Loot's Ganja Guide is only available to adults 21 years of age or older.
+        </Text>
+        
+        <Text style={styles.question}>
+          Are you 21 years of age or older?
         </Text>
 
-        <View style={styles.dateContainer}>
-          <Text style={styles.dateLabel}>Your Date of Birth:</Text>
-          <View style={styles.selectors}>
-            <NumberSelector
-              value={month}
-              onChange={setMonth}
-              min={1}
-              max={12}
-              label="Month"
-            />
-            <NumberSelector
-              value={day}
-              onChange={setDay}
-              min={1}
-              max={31}
-              label="Day"
-            />
-            <NumberSelector
-              value={year}
-              onChange={setYear}
-              min={1900}
-              max={new Date().getFullYear()}
-              label="Year"
-            />
-          </View>
+        <View style={styles.buttonContainer}>
+          <Button
+            title="Yes, I am 21+"
+            onPress={handleConfirmAge}
+            loading={isLoading}
+            disabled={isLoading}
+            containerStyle={styles.button}
+            buttonStyle={styles.confirmButton}
+          />
+          
+          <Button
+            title="No, I am under 21"
+            onPress={handleDenyAge}
+            disabled={isLoading}
+            containerStyle={styles.button}
+            buttonStyle={styles.denyButton}
+            titleStyle={styles.denyButtonText}
+            type="outline"
+          />
         </View>
-
+        
         <View style={styles.disclaimerContainer}>
           <Text style={styles.disclaimer}>
-            By continuing, you confirm that you are of legal age to use cannabis
+            By selecting "Yes", you confirm that you are of legal age to use cannabis
             products in your jurisdiction and agree to our Terms of Service.
           </Text>
         </View>
-
-        <Button
-          title="Verify Age"
-          onPress={handleVerification}
-          loading={isLoading}
-          disabled={isLoading}
-          containerStyle={styles.verifyButtonContainer}
-        />
-      </ScrollView>
+      </View>
     </View>
   );
 };
@@ -138,82 +122,67 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   contentContainer: {
-    padding: 20,
+    flex: 1,
+    padding: 24,
     justifyContent: 'center',
-    minHeight: '100%',
+    alignItems: 'center',
+  },
+  logo: {
+    width: 180,
+    height: 180,
+    marginBottom: 24,
   },
   title: {
     textAlign: 'center',
-    marginBottom: 20,
+    marginBottom: 24,
   },
-  subtitle: {
+  description: {
     fontSize: 16,
-    color: '#666',
+    color: '#555',
     textAlign: 'center',
-    marginBottom: 30,
+    marginBottom: 24,
+    lineHeight: 24,
   },
-  dateContainer: {
-    marginBottom: 30,
-  },
-  dateLabel: {
-    fontSize: 16,
-    marginBottom: 10,
+  question: {
+    fontSize: 18,
+    fontWeight: 'bold',
     color: '#333',
+    textAlign: 'center',
+    marginBottom: 24,
   },
-  selectors: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 10,
+  buttonContainer: {
+    width: '100%',
+    gap: 16,
+    marginBottom: 24,
   },
-  selectorContainer: {
-    flex: 1,
-    marginHorizontal: 5,
-    alignItems: 'center',
+  button: {
+    width: '100%',
   },
-  selectorLabel: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 5,
-  },
-  selectorControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#ddd',
+  confirmButton: {
+    backgroundColor: '#4CAF50',
+    paddingVertical: 12,
     borderRadius: 8,
   },
-  selectorButton: {
-    padding: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 40,
+  denyButton: {
+    borderColor: '#F44336',
+    borderWidth: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
   },
-  selectorButtonText: {
-    fontSize: 18,
-    color: '#333',
-  },
-  selectorValue: {
-    paddingHorizontal: 10,
-    minWidth: 40,
-    alignItems: 'center',
-  },
-  selectorValueText: {
-    fontSize: 16,
-    color: '#333',
+  denyButtonText: {
+    color: '#F44336',
   },
   disclaimerContainer: {
-    marginVertical: 20,
-    padding: 15,
+    padding: 16,
     backgroundColor: '#f8f8f8',
     borderRadius: 8,
+    marginTop: 16,
   },
   disclaimer: {
     fontSize: 14,
     color: '#666',
     textAlign: 'center',
-  },
-  verifyButtonContainer: {
-    marginTop: 20,
+    lineHeight: 20,
   },
 });
 

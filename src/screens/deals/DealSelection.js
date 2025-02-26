@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
 import { Text, Button, Card, Slider } from '@rneui/themed';
 import { useAppState, AppActions } from '../../context/AppStateContext';
+import vendorService from '../../services/Vendor.Service';
 
 const DealSelection = ({ navigation }) => {
   const { dispatch } = useAppState();
@@ -20,18 +21,25 @@ const DealSelection = ({ navigation }) => {
         longitude: -149.863129
       };
 
-      const vendors = await vendorService.searchVendors({
-        dealType,
-        maxDistance: distance,
-        maxResults: vendorCount,
-        currentLocation
-      });
+      // Get vendors with defensive error handling
+      let vendors = [];
+      try {
+        vendors = await vendorService.searchVendors({
+          dealType: dealType || 'daily',
+          maxDistance: distance,
+          maxResults: vendorCount,
+          currentLocation
+        });
+      } catch (err) {
+        console.error('Error fetching vendors:', err);
+        // Continue with empty array
+      }
 
       dispatch(AppActions.startJourney({
-        dealType,
-        vendors: mockVendors,
+        dealType: dealType || 'daily',
+        vendors: vendors,
         maxDistance: distance,
-        totalVendors: vendorCount
+        totalVendors: vendors.length
       }));
 
       navigation.navigate('RoutePreview');

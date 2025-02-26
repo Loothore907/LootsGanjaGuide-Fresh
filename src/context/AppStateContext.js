@@ -1,18 +1,22 @@
 // src/context/AppStateContext.js
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Logger, LogCategory } from '../services/LoggingService';
+import { handleError, tryCatch } from '../utils/ErrorHandler';
 
 // Initial state
 const initialState = {
   user: {
-    isAuthenticated: false,
     isAgeVerified: false,
+    isTosAccepted: false,
     username: null,
     points: 0,
+    favorites: [],
+    recentVisits: []
   },
   journey: {
     isActive: false,
-    dealType: null, // 'birthday' or 'daily'
+    dealType: null, // 'birthday', 'daily', or 'special'
     vendors: [],
     currentVendorIndex: -1,
     maxDistance: null,
@@ -26,41 +30,56 @@ const initialState = {
   vendorData: {
     list: [],
     lastUpdated: null,
+  },
+  dealFilters: {
+    category: null,
+    maxDistance: 25,
+    showPartnersOnly: false
+  },
+  ui: {
+    theme: 'light',
+    notifications: true
   }
 };
 
 // Action types
 const ActionTypes = {
-  SET_USER_AUTH: 'SET_USER_AUTH',
   SET_AGE_VERIFICATION: 'SET_AGE_VERIFICATION',
+  SET_TOS_ACCEPTED: 'SET_TOS_ACCEPTED',
   SET_USERNAME: 'SET_USERNAME',
   UPDATE_POINTS: 'UPDATE_POINTS',
+  ADD_FAVORITE: 'ADD_FAVORITE',
+  REMOVE_FAVORITE: 'REMOVE_FAVORITE',
+  ADD_RECENT_VISIT: 'ADD_RECENT_VISIT',
   START_JOURNEY: 'START_JOURNEY',
   END_JOURNEY: 'END_JOURNEY',
   NEXT_VENDOR: 'NEXT_VENDOR',
   SKIP_VENDOR: 'SKIP_VENDOR',
   UPDATE_ROUTE: 'UPDATE_ROUTE',
   UPDATE_VENDOR_DATA: 'UPDATE_VENDOR_DATA',
+  UPDATE_DEAL_FILTERS: 'UPDATE_DEAL_FILTERS',
+  SET_THEME: 'SET_THEME',
+  SET_NOTIFICATIONS: 'SET_NOTIFICATIONS'
 };
 
 // Reducer
 function appReducer(state, action) {
   switch (action.type) {
-    case ActionTypes.SET_USER_AUTH:
-      return {
-        ...state,
-        user: {
-          ...state.user,
-          isAuthenticated: action.payload
-        }
-      };
-
     case ActionTypes.SET_AGE_VERIFICATION:
       return {
         ...state,
         user: {
           ...state.user,
           isAgeVerified: action.payload
+        }
+      };
+
+    case ActionTypes.SET_TOS_ACCEPTED:
+      return {
+        ...state,
+        user: {
+          ...state.user,
+          isTosAccepted: action.payload
         }
       };
 
@@ -78,7 +97,45 @@ function appReducer(state, action) {
         ...state,
         user: {
           ...state.user,
-          points: state.user.points + action.payload
+          points: typeof action.payload === 'number' 
+            ? action.payload 
+            : state.user.points + action.payload
+        }
+      };
+
+    case ActionTypes.ADD_FAVORITE:
+      // Avoid duplicates
+      if (state.user.favorites.includes(action.payload)) {
+        return state;
+      }
+      return {
+        ...state,
+        user: {
+          ...state.user,
+          favorites: [...state.user.favorites, action.payload]
+        }
+      };
+
+    case ActionTypes.REMOVE_FAVORITE:
+      return {
+        ...state,
+        user: {
+          ...state.user,
+          favorites: state.user.favorites.filter(id => id !== action.payload)
+        }
+      };
+
+    case ActionTypes.ADD_RECENT_VISIT:
+      const newVisit = action.payload;
+      const existingVisits = state.user.recentVisits.filter(
+        visit => visit.vendorId !== newVisit.vendorId
+      );
+      
+      return {
+        ...state,
+        user: {
+          ...state.user,
+          recentVisits: [newVisit, ...existingVisits].slice(0, 10) // Keep only 10 most recent
         }
       };
 
@@ -147,6 +204,33 @@ function appReducer(state, action) {
         }
       };
 
+    case ActionTypes.UPDATE_DEAL_FILTERS:
+      return {
+        ...state,
+        dealFilters: {
+          ...state.dealFilters,
+          ...action.payload
+        }
+      };
+      
+    case ActionTypes.SET_THEME:
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          theme: action.payload
+        }
+      };
+      
+    case ActionTypes.SET_NOTIFICATIONS:
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          notifications: action.payload
+        }
+      };
+
     default:
       return state;
   }
@@ -163,35 +247,95 @@ export function AppStateProvider({ children }) {
   useEffect(() => {
     const loadPersistedData = async () => {
       try {
-        const [username, points, isAgeVerified] = await Promise.all([
-          AsyncStorage.getItem('username'),
-          AsyncStorage.getItem('points'),
-          AsyncStorage.getItem('isAgeVerified'),
-        ]);
+        await tryCatch(async () => {
+          const [
+            isAgeVerified,
+            isTosAccepted,
+            username,
+            points,
+            favoritesJson,
+            recentVisitsJson,
+            theme,
+            notifications
+          ] = await Promise.all([
+            AsyncStorage.getItem('isAgeVerified'),
+            AsyncStorage.getItem('tosAccepted'),
+            AsyncStorage.getItem('username'),
+            AsyncStorage.getItem('points'),
+            AsyncStorage.getItem('favorites'),
+            AsyncStorage.getItem('recentVisits'),
+            AsyncStorage.getItem('theme'),
+            AsyncStorage.getItem('notifications')
+          ]);
 
-        if (username) dispatch({ type: ActionTypes.SET_USERNAME, payload: username });
-        if (points) dispatch({ type: ActionTypes.UPDATE_POINTS, payload: parseInt(points) });
-        if (isAgeVerified) dispatch({ type: ActionTypes.SET_AGE_VERIFICATION, payload: isAgeVerified === 'true' });
+          if (isAgeVerified === 'true') {
+            dispatch({ type: ActionTypes.SET_AGE_VERIFICATION, payload: true });
+          }
+          
+          if (isTosAccepted === 'true') {
+            dispatch({ type: ActionTypes.SET_TOS_ACCEPTED, payload: true });
+          }
+          
+          if (username) {
+            dispatch({ type: ActionTypes.SET_USERNAME, payload: username });
+          }
+          
+          if (points) {
+            dispatch({ type: ActionTypes.UPDATE_POINTS, payload: parseInt(points) });
+          }
+          
+          if (favoritesJson) {
+            const favorites = JSON.parse(favoritesJson);
+            for (const favoriteId of favorites) {
+              dispatch({ type: ActionTypes.ADD_FAVORITE, payload: favoriteId });
+            }
+          }
+          
+          if (recentVisitsJson) {
+            const recentVisits = JSON.parse(recentVisitsJson);
+            for (const visit of recentVisits) {
+              dispatch({ type: ActionTypes.ADD_RECENT_VISIT, payload: visit });
+            }
+          }
+          
+          if (theme) {
+            dispatch({ type: ActionTypes.SET_THEME, payload: theme });
+          }
+          
+          if (notifications) {
+            dispatch({ type: ActionTypes.SET_NOTIFICATIONS, payload: notifications === 'true' });
+          }
+          
+          Logger.info(LogCategory.STORAGE, 'Loaded persisted state data');
+        }, LogCategory.STORAGE, 'loading persisted state', false);
       } catch (error) {
-        console.error('Error loading persisted data:', error);
+        // Error already logged by tryCatch
       }
     };
 
     loadPersistedData();
   }, []);
 
-  // Persist certain state changes
+  // Persist state changes for specific items
   useEffect(() => {
-    const persistData = async () => {
+    const persistStateChanges = async () => {
       try {
-        await AsyncStorage.setItem('points', state.user.points.toString());
+        await tryCatch(async () => {
+          await AsyncStorage.setItem('points', state.user.points.toString());
+          await AsyncStorage.setItem('favorites', JSON.stringify(state.user.favorites));
+          await AsyncStorage.setItem('recentVisits', JSON.stringify(state.user.recentVisits));
+          await AsyncStorage.setItem('theme', state.ui.theme);
+          await AsyncStorage.setItem('notifications', state.ui.notifications.toString());
+          
+          Logger.debug(LogCategory.STORAGE, 'Persisted state changes');
+        }, LogCategory.STORAGE, 'persisting state changes', false);
       } catch (error) {
-        console.error('Error persisting data:', error);
+        // Error already logged by tryCatch
       }
     };
 
-    persistData();
-  }, [state.user.points]);
+    persistStateChanges();
+  }, [state.user.points, state.user.favorites, state.user.recentVisits, state.ui.theme, state.ui.notifications]);
 
   return (
     <AppStateContext.Provider value={{ state, dispatch }}>
@@ -211,41 +355,80 @@ export function useAppState() {
 
 // Action creators
 export const AppActions = {
-  setUserAuth: (isAuthenticated) => ({
-    type: ActionTypes.SET_USER_AUTH,
-    payload: isAuthenticated
-  }),
   setAgeVerification: (isVerified) => ({
     type: ActionTypes.SET_AGE_VERIFICATION,
     payload: isVerified
   }),
+  
+  setTosAccepted: (isAccepted) => ({
+    type: ActionTypes.SET_TOS_ACCEPTED,
+    payload: isAccepted
+  }),
+  
   setUsername: (username) => ({
     type: ActionTypes.SET_USERNAME,
     payload: username
   }),
+  
   updatePoints: (points) => ({
     type: ActionTypes.UPDATE_POINTS,
     payload: points
   }),
+  
+  addFavorite: (vendorId) => ({
+    type: ActionTypes.ADD_FAVORITE,
+    payload: vendorId
+  }),
+  
+  removeFavorite: (vendorId) => ({
+    type: ActionTypes.REMOVE_FAVORITE,
+    payload: vendorId
+  }),
+  
+  addRecentVisit: (visit) => ({
+    type: ActionTypes.ADD_RECENT_VISIT,
+    payload: visit
+  }),
+  
   startJourney: (journeyData) => ({
     type: ActionTypes.START_JOURNEY,
     payload: journeyData
   }),
+  
   endJourney: () => ({
     type: ActionTypes.END_JOURNEY
   }),
+  
   nextVendor: () => ({
     type: ActionTypes.NEXT_VENDOR
   }),
+  
   skipVendor: () => ({
     type: ActionTypes.SKIP_VENDOR
   }),
+  
   updateRoute: (routeData) => ({
     type: ActionTypes.UPDATE_ROUTE,
     payload: routeData
   }),
+  
   updateVendorData: (vendors) => ({
     type: ActionTypes.UPDATE_VENDOR_DATA,
     payload: { vendors }
+  }),
+  
+  updateDealFilters: (filters) => ({
+    type: ActionTypes.UPDATE_DEAL_FILTERS,
+    payload: filters
+  }),
+  
+  setTheme: (theme) => ({
+    type: ActionTypes.SET_THEME,
+    payload: theme
+  }),
+  
+  setNotifications: (enabled) => ({
+    type: ActionTypes.SET_NOTIFICATIONS,
+    payload: enabled
   })
 };

@@ -1,50 +1,114 @@
-# Welcome to your Expo app 👋
+# Loot's Ganja Guide
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+## Description
+A mobile application designed to help cannabis enthusiasts in Anchorage, Alaska discover and track local dispensary deals. The app creates optimized routes based on user preferences, facilitates check-ins at dispensaries, and rewards users with points for their journey completions.
 
-## Get started
+## Features
+- Deal discovery (Birthday, Daily, and Special deals)
+- Route optimization based on location and preferences
+- QR code check-in system
+- Points reward system
+- Social media integration
+- Vendor partnership opportunities
+- Age verification (21+)
+- Local authentication
 
-1. Install dependencies
+## Technology Stack
+- React Native / Expo
+- React Navigation
+- AsyncStorage for local data
+- Maps integration
+- QR code scanning capabilities
+- Social media APIs
 
-   ```bash
-   npm install
-   ```
+## Project Status
+This repository contains a fresh implementation of the Loot's Ganja Guide app. The original codebase can be found at: https://github.com/Loothore907/LootsGanjaGuide.git
 
-2. Start the app
+We've created this fresh project to resolve dependency conflicts and implement an improved architecture.
 
-   ```bash
-    npx expo start
-   ```
+## Current Implementation Status
+- Created a fresh Expo/React Native project
+- Successfully configured the development environment with Android Studio emulator
+- Basic project structure established with directory hierarchy
+- Started implementation of authentication flow
+- AppStateContext implemented for state management
+- Core navigation flow defined
 
-In the output, you'll find options to open the app in a
+## Prerequisites
+- Node.js (LTS version)
+- npm or yarn
+- Expo CLI
+- Android Studio (for Android emulator)
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
+## Installation
+1. Clone the repository
 ```bash
-npm run reset-project
-```
+git clone https://github.com/YOUR_USERNAME/LootsGanjaGuide-Fresh.git
+cd LootsGanjaGuide-Fresh
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Install dependencies
 
-## Learn more
+bashCopynpm install
 
-To learn more about developing your project with Expo, look at the following resources:
+Start the development server
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+bashCopynpx expo start
+Development Setup
 
-## Join the community
+Ensure you have the latest version of Node.js installed
+Install the Expo Go app on your mobile device for testing
+Set up Android Studio for emulator testing
 
-Join our community of developers creating universal apps.
+Project Structure
+Copysrc/
+├── screens/
+│   ├── auth/       # Authentication screens
+│   ├── deals/      # Deal discovery screens
+│   ├── navigation/ # Route and map screens
+│   ├── vendor/     # Vendor-related screens
+│   └── journey/    # Journey completion screens
+├── components/     # Reusable components
+├── context/        # Application state management
+└── services/       # API and service integrations
+Development Roadmap
+Phase 1: Core Functionality (Current)
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Complete authentication flow
+Implement deal discovery screens
+Create vendor listing and filtering
+
+Phase 2: Journey System
+
+Implement route optimization
+Develop map integration
+Build check-in functionality
+
+Phase 3: User Engagement
+
+Implement points system
+Add social media sharing
+Create user profiles and history
+
+Phase 4: Vendor Integration
+
+Develop partner features
+Create analytics dashboard
+Implement advertising system
+
+Contributing
+
+Fork the repository
+Create your feature branch (git checkout -b feature/amazing-feature)
+Commit your changes (git commit -m 'Add some amazing feature')
+Push to the branch (git push origin feature/amazing-feature)
+Open a Pull Request
+
+License
+[License Type] - See LICENSE.md file for details
+Contact
+Project Owner: Loothore907
+Acknowledgments
+
+Local dispensary partners
+Anchorage cannabis community
+React Native and Expo community
