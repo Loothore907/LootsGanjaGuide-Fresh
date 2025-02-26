@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background Circle -->
+  <circle cx="256" cy="256" r="248" fill="#FFFFFF" stroke="#4CAF50" stroke-width="16"/>
+  
+  <!-- Stylized Cannabis Leaf -->
+  <g transform="translate(256, 256) scale(0.8) translate(-256, -256)">
+    <!-- Main Stem -->
+    <path d="M256 390 L256 256" stroke="#4CAF50" stroke-width="15" stroke-linecap="round"/>
+    
+    <!-- Leaf Shape - Base -->
+    <path d="M256,120 
+             C350,160 400,220 350,300 
+             L256,256 
+             C162,220 112,160 162,80 
+             Z" 
+          fill="#4CAF50"/>
+    
+    <!-- Leaf Shape - Left Side -->
+    <path d="M256,256
+             C190,210 170,160 190,120
+             L256,256"
+          fill="#3E9142"/>
+    
+    <!-- Leaf Shape - Right Side -->
+    <path d="M256,256
+             C320,210 340,160 320,120
+             L256,256"
+          fill="#3E9142"/>
+    
+    <!-- Leaf Fingers -->
+    <path d="M200,170 L256,256 M230,155 L256,256 M280,155 L256,256 M310,170 L256,256" 
+          stroke="#2E7D32" stroke-width="10" stroke-linecap="round"/>
+  </g>
+  
+  <!-- Text "LOOT'S" -->
+  <text x="256" y="380" font-family="Arial" font-size="42" font-weight="bold" text-anchor="middle" fill="#333333">LOOT'S</text>
+  
+  <!-- Text "GANJA GUIDE" -->
+  <text x="256" y="420" font-family="Arial" font-size="28" text-anchor="middle" fill="#4CAF50">GANJA GUIDE</text>
+</svg>
