@@ -12,13 +12,152 @@ import {
   Button, 
   Icon
 } from '@rneui/themed';
-import * as ExpoBarCodeScanner from 'expo-barcode-scanner';
 import { Camera } from 'expo-camera';
 import { useAppState, AppActions } from '../../context/AppStateContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
 import { checkInAtVendor, getVendorById } from '../../services/MockDataService';
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  centeredContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#FFFFFF',
+  },
+  permissionText: {
+    textAlign: 'center',
+    marginTop: 20,
+    fontSize: 16,
+    color: '#666666',
+    marginBottom: 20,
+  },
+  permissionButton: {
+    backgroundColor: '#4CAF50',
+  },
+  buttonContainer: {
+    width: '80%',
+    marginTop: 20,
+  },
+  scannerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scanner: {
+    height: 300,
+    width: 300,
+  },
+  overlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0)',
+  },
+  unfilled: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  row: {
+    flexDirection: 'row',
+    height: 300,
+  },
+  instructionsContainer: {
+    position: 'absolute',
+    top: 150,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  instructionsText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  scanAgainButton: {
+    backgroundColor: '#4CAF50',
+  },
+  scanAgainButtonContainer: {
+    position: 'absolute',
+    bottom: 100,
+  },
+  cancelButton: {
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  cancelButtonContainer: {
+    position: 'absolute',
+    bottom: 40,
+    width: 120,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginTop: 16,
+  },
+  confirmContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#FFFFFF',
+  },
+  confirmTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  confirmVendor: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  confirmAddress: {
+    fontSize: 16,
+    color: '#666666',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  rewardContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginBottom: 20,
+  },
+  rewardText: {
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#4CAF50',
+    fontWeight: 'bold',
+  },
+  confirmButton: {
+    backgroundColor: '#4CAF50',
+  },
+});
 
 const VendorCheckin = ({ route, navigation }) => {
   const { state, dispatch } = useAppState();
@@ -251,10 +390,12 @@ const VendorCheckin = ({ route, navigation }) => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.scannerContainer}>
-        <ExpoBarCodeScanner.BarCodeScanner
-          onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+        <Camera
           style={styles.scanner}
+          onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+          type={Camera.Constants.Type.back}
         />
+       
         <View style={styles.overlay}>
           <View style={styles.unfilled} />
           <View style={styles.row}>
@@ -297,145 +438,5 @@ const VendorCheckin = ({ route, navigation }) => {
     </SafeAreaView>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  centeredContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#FFFFFF',
-  },
-  permissionText: {
-    textAlign: 'center',
-    marginTop: 20,
-    fontSize: 16,
-    color: '#666666',
-    marginBottom: 20,
-  },
-  permissionButton: {
-    backgroundColor: '#4CAF50',
-  },
-  buttonContainer: {
-    width: '80%',
-    marginTop: 20,
-  },
-  scannerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  scanner: {
-    height: 300,
-    width: 300,
-  },
-  overlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0)',
-  },
-  unfilled: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  row: {
-    flexDirection: 'row',
-    height: 300,
-  },
-  instructionsContainer: {
-    position: 'absolute',
-    top: 150,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  instructionsText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    textAlign: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  scanAgainButton: {
-    backgroundColor: '#4CAF50',
-  },
-  scanAgainButtonContainer: {
-    position: 'absolute',
-    bottom: 100,
-  },
-  cancelButton: {
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  cancelButtonContainer: {
-    position: 'absolute',
-    bottom: 40,
-    width: 120,
-  },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    marginTop: 16,
-  },
-  confirmContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#FFFFFF',
-  },
-  confirmTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  confirmVendor: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  confirmAddress: {
-    fontSize: 16,
-    color: '#666666',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  rewardContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E8F5E9',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginBottom: 20,
-  },
-  rewardText: {
-    marginLeft: 8,
-    fontSize: 16,
-    color: '#4CAF50',
-    fontWeight: 'bold',
-  },
-  confirmButton: {
-    backgroundColor: '#4CAF50',
-  },
-});
 
 export default VendorCheckin;
