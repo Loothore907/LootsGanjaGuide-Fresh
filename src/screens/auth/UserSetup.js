@@ -4,6 +4,8 @@ import { View, StyleSheet, Alert, Keyboard } from 'react-native';
 import { Text, Button, Input } from '@rneui/themed';
 import { useAppState, AppActions } from '../../context/AppStateContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Logger, LogCategory } from '../../services/LoggingService';
+import { tryCatch } from '../../utils/ErrorHandler';
 
 const UserSetup = ({ navigation }) => {
   const { dispatch } = useAppState();
@@ -36,21 +38,27 @@ const UserSetup = ({ navigation }) => {
     setError('');
 
     try {
-      // In a full implementation, you might want to check if username is already taken
-      // await checkUsernameAvailability(username);
-
-      // Store username
-      await AsyncStorage.setItem('username', username);
-      
-      // Initialize points
-      await AsyncStorage.setItem('points', '0');
-      
-      // Update global state
-      dispatch(AppActions.setUsername(username));
-      
-      // Navigation will be handled by App.js based on username state
+      await tryCatch(async () => {
+        // Store username
+        await AsyncStorage.setItem('username', username);
+        
+        // Initialize points
+        await AsyncStorage.setItem('points', '0');
+        
+        // Update global state
+        dispatch(AppActions.setUsername(username));
+        
+        // Log success
+        Logger.info(LogCategory.AUTH, 'User setup completed', { username });
+        
+        // Navigate to main app dashboard
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'MainTabs' }],
+        });
+      }, LogCategory.AUTH, 'user setup', true);
     } catch (error) {
-      console.error('Username setup error:', error);
+      // Error is already logged by tryCatch
       Alert.alert('Error', 'Failed to set up username. Please try again.');
     } finally {
       setIsLoading(false);

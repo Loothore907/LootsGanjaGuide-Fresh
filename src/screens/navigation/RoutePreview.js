@@ -4,6 +4,7 @@ import { View, StyleSheet, ScrollView } from 'react-native';
 import { Text, Button, Card, Icon, Divider } from '@rneui/themed';
 import { useAppState } from '../../context/AppStateContext';
 import { vendorService } from '../../services/Vendor.Service';
+import { getDayOfWeek } from '../../utils/DateUtils'; // Import our safe date utility
 
 const RoutePreview = ({ navigation }) => {
   const { state } = useAppState();
@@ -35,8 +36,9 @@ const RoutePreview = ({ navigation }) => {
     return `${distance.toFixed(1)} miles away`;
   };
 
+  // Use our safe date utility instead of directly calling toLocaleLowerCase on Date
   const getTodaysDeals = (vendor) => {
-    const today = new Date().toLocaleLowerCase();
+    const today = getDayOfWeek(); // This safely returns the day as a lowercase string
     return vendor.deals.daily[today] || [];
   };
 

@@ -1,7 +1,7 @@
 // src/screens/auth/TermsOfService.js
 import React, { useState, useRef } from 'react';
-import { View, StyleSheet, ScrollView, Alert, ActivityIndicator } from 'react-native';
-import { Text, Button, CheckBox } from '@rneui/themed';
+import { View, StyleSheet, ScrollView, Alert, ActivityIndicator, Platform, BackHandler, Dimensions } from 'react-native';
+import { Text, Button } from '@rneui/themed';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
@@ -10,21 +10,10 @@ import { useAppState, AppActions } from '../../context/AppStateContext';
 const TermsOfService = ({ navigation }) => {
   const { dispatch } = useAppState();
   const [isLoading, setIsLoading] = useState(false);
-  const [acceptedTerms, setAcceptedTerms] = useState(false);
-  const [acceptedPrivacyPolicy, setAcceptedPrivacyPolicy] = useState(false);
-  const [acceptedDataCollection, setAcceptedDataCollection] = useState(false);
+  const [hasScrolledToBottom, setHasScrolledToBottom] = useState(false);
   const scrollViewRef = useRef(null);
   
   const handleAccept = async () => {
-    if (!acceptedTerms || !acceptedPrivacyPolicy || !acceptedDataCollection) {
-      Alert.alert(
-        'Agreement Required',
-        'Please accept all terms to continue using Loot\'s Ganja Guide.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-    
     setIsLoading(true);
     try {
       await tryCatch(async () => {
@@ -75,9 +64,49 @@ const TermsOfService = ({ navigation }) => {
     );
   };
 
-  const scrollToBottom = () => {
-    if (scrollViewRef.current) {
-      scrollViewRef.current.scrollToEnd({ animated: true });
+  // Improved scroll position detection function with debug logs
+  const handleScroll = ({ nativeEvent }) => {
+    const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
+    const paddingToBottom = 20;
+    const isAtBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
+    
+    // Log scrolling info for debugging
+    console.log('Scroll position:', {
+      visibleHeight: layoutMeasurement.height,
+      scrollOffset: contentOffset.y,
+      contentHeight: contentSize.height,
+      isAtBottom: isAtBottom
+    });
+    
+    if (isAtBottom && !hasScrolledToBottom) {
+      setHasScrolledToBottom(true);
+      // Log that user has reached the bottom
+      console.log('User scrolled to bottom of Terms of Service');
+      Logger.debug(LogCategory.UI, 'User scrolled to bottom of Terms of Service');
+    }
+  };
+
+  // Alternative method - enable the button after a delay
+  const enableAcceptAfterDelay = () => {
+    // After 8 seconds, assume the user has had time to read the terms
+    setTimeout(() => {
+      if (!hasScrolledToBottom) {
+        console.log('Enabling Accept button after timeout');
+        setHasScrolledToBottom(true);
+      }
+    }, 8000);
+  };
+
+  // Call the function when component mounts
+  React.useEffect(() => {
+    enableAcceptAfterDelay();
+  }, []);
+
+  // Force the button to enable when user clicks at the bottom manually
+  const handleContentPress = () => {
+    if (!hasScrolledToBottom) {
+      console.log('User tapped content, enabling Accept button');
+      setHasScrolledToBottom(true);
     }
   };
 
@@ -89,6 +118,8 @@ const TermsOfService = ({ navigation }) => {
         ref={scrollViewRef}
         style={styles.scrollView}
         contentContainerStyle={styles.scrollViewContent}
+        onScroll={handleScroll}
+        scrollEventThrottle={100} // More frequent check
       >
         <Text style={styles.sectionHeader}>Terms of Service</Text>
         <Text style={styles.paragraph}>
@@ -150,33 +181,24 @@ const TermsOfService = ({ navigation }) => {
           {'\n'}• Restricting or objecting to certain processing
         </Text>
 
-        <Text style={styles.paragraph} onPress={scrollToBottom}>
-          <Text style={[styles.link, styles.bold]}>Continue reading...</Text>
+        <Text style={styles.paragraph}>
+          By accepting these terms, you acknowledge that you have read and understood our Terms of Service and Privacy Policy, and you consent to the collection and use of your data as described.
         </Text>
+        
+        <Text style={styles.paragraph}>
+          If you have any questions about our Terms of Service or Privacy Policy, please contact us.
+        </Text>
+        
+        {/* Clickable end indicator that enables the button */}
+        <View 
+          style={styles.scrollEndIndicator} 
+          onTouchEnd={handleContentPress}
+        >
+          <Text style={styles.scrollEndText}>
+            End of Terms - Tap here to enable Accept button
+          </Text>
+        </View>
       </ScrollView>
-      
-      <View style={styles.checkboxContainer}>
-        <CheckBox
-          title="I accept the Terms of Service"
-          checked={acceptedTerms}
-          onPress={() => setAcceptedTerms(!acceptedTerms)}
-          containerStyle={styles.checkbox}
-        />
-        
-        <CheckBox
-          title="I accept the Privacy Policy"
-          checked={acceptedPrivacyPolicy}
-          onPress={() => setAcceptedPrivacyPolicy(!acceptedPrivacyPolicy)}
-          containerStyle={styles.checkbox}
-        />
-        
-        <CheckBox
-          title="I consent to the collection and use of my data as described"
-          checked={acceptedDataCollection}
-          onPress={() => setAcceptedDataCollection(!acceptedDataCollection)}
-          containerStyle={styles.checkbox}
-        />
-      </View>
       
       <View style={styles.buttonsContainer}>
         <Button
@@ -190,10 +212,16 @@ const TermsOfService = ({ navigation }) => {
           title="Accept"
           onPress={handleAccept}
           loading={isLoading}
-          disabled={isLoading || !acceptedTerms || !acceptedPrivacyPolicy || !acceptedDataCollection}
+          disabled={isLoading || !hasScrolledToBottom}
           containerStyle={styles.button}
         />
       </View>
+      
+      {!hasScrolledToBottom && (
+        <Text style={styles.scrollHint}>
+          Please scroll down and review the entire document
+        </Text>
+      )}
     </View>
   );
 };
@@ -213,7 +241,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   scrollViewContent: {
-    paddingBottom: 20,
+    paddingBottom: 60, // Added extra padding to ensure there's room to scroll
   },
   sectionHeader: {
     fontSize: 18,
@@ -234,23 +262,36 @@ const styles = StyleSheet.create({
     color: '#2089dc',
     textDecorationLine: 'underline',
   },
-  checkboxContainer: {
-    marginBottom: 20,
-  },
-  checkbox: {
-    backgroundColor: 'transparent',
-    borderWidth: 0,
-    padding: 0,
-    marginLeft: 0,
-  },
   buttonsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginBottom: 10,
   },
   button: {
     flex: 1,
     marginHorizontal: 5,
   },
+  scrollHint: {
+    textAlign: 'center',
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 10,
+  },
+  scrollEndIndicator: {
+    alignItems: 'center',
+    paddingVertical: 15,
+    marginTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    backgroundColor: '#f0f0f0',
+    padding: 15,
+    borderRadius: 8,
+  },
+  scrollEndText: {
+    color: '#4CAF50',
+    fontSize: 14,
+    fontWeight: 'bold',
+  }
 });
 
 export default TermsOfService;

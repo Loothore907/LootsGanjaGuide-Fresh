@@ -12,6 +12,7 @@ import { Logger, LogCategory } from './src/services/LoggingService';
 
 // Screen Imports - Auth
 import AgeVerification from './src/screens/auth/AgeVerification';
+import ReturnUserVerification from './src/screens/auth/ReturnUserVerification';
 import TermsOfService from './src/screens/auth/TermsOfService';
 import UserSetup from './src/screens/auth/UserSetup';
 
@@ -39,6 +40,9 @@ import AllVendors from './src/screens/vendor/AllVendors';
 // Context Provider for Global State
 import { AppStateProvider } from './src/context/AppStateContext';
 import { handleError, tryCatch } from './src/utils/ErrorHandler';
+
+// Developer Tools (only loaded in development)
+import DevTools from './src/components/DevTools';
 
 // Create navigators
 const Stack = createStackNavigator();
@@ -77,11 +81,13 @@ const MainTabs = () => {
   );
 };
 
-export default function App() {
+const AppContent = () => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [isAgeVerified, setIsAgeVerified] = useState(false);
   const [isTosAccepted, setIsTosAccepted] = useState(false);
   const [hasUsername, setHasUsername] = useState(false);
+  const [username, setUsername] = useState(null);
+  const [isReturningUser, setIsReturningUser] = useState(false);
 
   // Initialize logging and check for user status
   useEffect(() => {
@@ -93,7 +99,7 @@ export default function App() {
         
         await tryCatch(async () => {
           // Check for existing user setup
-          const [ageStatus, tosStatus, username] = await Promise.all([
+          const [ageStatus, tosStatus, usernameValue] = await Promise.all([
             AsyncStorage.getItem('isAgeVerified'),
             AsyncStorage.getItem('tosAccepted'),
             AsyncStorage.getItem('username')
@@ -101,12 +107,23 @@ export default function App() {
           
           setIsAgeVerified(ageStatus === 'true');
           setIsTosAccepted(tosStatus === 'true');
-          setHasUsername(!!username);
+          setHasUsername(!!usernameValue);
+          
+          // Store username for returning user verification
+          if (usernameValue) {
+            setUsername(usernameValue);
+          }
+          
+          // Determine if user is returning (has verified age before)
+          if (ageStatus === 'true' && tosStatus === 'true' && usernameValue) {
+            setIsReturningUser(true);
+          }
           
           Logger.info(LogCategory.AUTH, 'User status loaded', {
             isAgeVerified: ageStatus === 'true',
             isTosAccepted: tosStatus === 'true',
-            hasUsername: !!username
+            hasUsername: !!usernameValue,
+            isReturningUser: (ageStatus === 'true' && tosStatus === 'true' && !!usernameValue)
           });
         }, LogCategory.AUTH, 'loading user status', false);
       } catch (error) {
@@ -127,95 +144,124 @@ export default function App() {
 
   // Determine initial route name based on user status
   const getInitialRouteName = () => {
-    if (!isAgeVerified) return 'AgeVerification';
-    if (!isTosAccepted) return 'TermsOfService';
-    if (!hasUsername) return 'UserSetup';
+    if (isReturningUser) {
+      return 'ReturnUserVerification';
+    }
+    
+    if (!isAgeVerified) {
+      return 'AgeVerification';
+    }
+    
+    if (!isTosAccepted) {
+      return 'TermsOfService';
+    }
+    
+    if (!hasUsername) {
+      return 'UserSetup';
+    }
+    
     return 'MainTabs';
   };
 
   return (
+    <NavigationContainer>
+      {/* Stack Navigator for all screens */}
+      <Stack.Navigator 
+        initialRouteName={getInitialRouteName()}
+        screenOptions={{
+          headerShown: false,
+          cardStyle: { backgroundColor: 'white' }
+        }}
+      >
+        {/* Authentication Flow */}
+        <Stack.Screen name="AgeVerification" component={AgeVerification} />
+        <Stack.Screen 
+          name="ReturnUserVerification" 
+          component={ReturnUserVerification} 
+          initialParams={{ username }}
+        />
+        <Stack.Screen name="TermsOfService" component={TermsOfService} />
+        <Stack.Screen name="UserSetup" component={UserSetup} />
+
+        {/* Main App */}
+        <Stack.Screen name="MainTabs" component={MainTabs} />
+
+        {/* Deal Screens */}
+        <Stack.Screen 
+          name="DealSelection" 
+          component={DealSelection}
+          options={{ headerShown: true, title: 'Select Deal Type' }}
+        />
+        <Stack.Screen 
+          name="BirthdayDeals" 
+          component={BirthdayDeals}
+          options={{ headerShown: true, title: 'Birthday Deals' }}
+        />
+        <Stack.Screen 
+          name="DailyDeals" 
+          component={DailyDeals}
+          options={{ headerShown: true, title: 'Daily Deals' }}
+        />
+        <Stack.Screen 
+          name="SpecialDeals" 
+          component={SpecialDeals}
+          options={{ headerShown: true, title: 'Special Offers' }}
+        />
+
+        {/* Journey Screens */}
+        <Stack.Screen 
+          name="RoutePreview" 
+          component={RoutePreview}
+          options={{ headerShown: true, title: 'Your Journey' }}
+        />
+        <Stack.Screen 
+          name="VendorCheckin" 
+          component={VendorCheckin}
+          options={{ headerShown: true, title: 'Check In' }}
+        />
+        <Stack.Screen 
+          name="JourneyComplete" 
+          component={JourneyComplete}
+          options={{ headerShown: true, title: 'Journey Complete' }}
+        />
+
+        {/* Vendor Screens */}
+        <Stack.Screen 
+          name="VendorProfile" 
+          component={VendorProfile}
+          options={{ headerShown: true, title: 'Vendor Details' }}
+        />
+        <Stack.Screen 
+          name="AllVendors" 
+          component={AllVendors}
+          options={{ headerShown: true, title: 'All Vendors' }}
+        />
+
+        {/* User Screens */}
+        <Stack.Screen 
+          name="Settings" 
+          component={Settings}
+          options={{ headerShown: true, title: 'Settings' }}
+        />
+        <Stack.Screen 
+          name="Points" 
+          component={Points}
+          options={{ headerShown: true, title: 'Your Points' }}
+        />
+      </Stack.Navigator>
+      
+      {/* Developer Tools - only rendered in __DEV__ mode */}
+      {/* Now inside NavigationContainer so it can access navigation */}
+      {__DEV__ && <DevTools />}
+    </NavigationContainer>
+  );
+};
+
+export default function App() {
+  return (
     <SafeAreaProvider>
       <AppStateProvider>
-        <NavigationContainer>
-          <Stack.Navigator 
-            initialRouteName={getInitialRouteName()}
-            screenOptions={{
-              headerShown: false,
-              cardStyle: { backgroundColor: 'white' }
-            }}
-          >
-            {/* Authentication Flow */}
-            <Stack.Screen name="AgeVerification" component={AgeVerification} />
-            <Stack.Screen name="TermsOfService" component={TermsOfService} />
-            <Stack.Screen name="UserSetup" component={UserSetup} />
-
-            {/* Main App */}
-            <Stack.Screen name="MainTabs" component={MainTabs} />
-
-            {/* Deal Screens */}
-            <Stack.Screen 
-              name="DealSelection" 
-              component={DealSelection}
-              options={{ headerShown: true, title: 'Select Deal Type' }}
-            />
-            <Stack.Screen 
-              name="BirthdayDeals" 
-              component={BirthdayDeals}
-              options={{ headerShown: true, title: 'Birthday Deals' }}
-            />
-            <Stack.Screen 
-              name="DailyDeals" 
-              component={DailyDeals}
-              options={{ headerShown: true, title: 'Daily Deals' }}
-            />
-            <Stack.Screen 
-              name="SpecialDeals" 
-              component={SpecialDeals}
-              options={{ headerShown: true, title: 'Special Offers' }}
-            />
-
-            {/* Journey Screens */}
-            <Stack.Screen 
-              name="RoutePreview" 
-              component={RoutePreview}
-              options={{ headerShown: true, title: 'Your Journey' }}
-            />
-            <Stack.Screen 
-              name="VendorCheckin" 
-              component={VendorCheckin}
-              options={{ headerShown: true, title: 'Check In' }}
-            />
-            <Stack.Screen 
-              name="JourneyComplete" 
-              component={JourneyComplete}
-              options={{ headerShown: true, title: 'Journey Complete' }}
-            />
-
-            {/* Vendor Screens */}
-            <Stack.Screen 
-              name="VendorProfile" 
-              component={VendorProfile}
-              options={{ headerShown: true, title: 'Vendor Details' }}
-            />
-            <Stack.Screen 
-              name="AllVendors" 
-              component={AllVendors}
-              options={{ headerShown: true, title: 'All Vendors' }}
-            />
-
-            {/* User Screens */}
-            <Stack.Screen 
-              name="Settings" 
-              component={Settings}
-              options={{ headerShown: true, title: 'Settings' }}
-            />
-            <Stack.Screen 
-              name="Points" 
-              component={Points}
-              options={{ headerShown: true, title: 'Your Points' }}
-            />
-          </Stack.Navigator>
-        </NavigationContainer>
+        <AppContent />
       </AppStateProvider>
     </SafeAreaProvider>
   );

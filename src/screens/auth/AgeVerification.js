@@ -1,11 +1,11 @@
 // src/screens/auth/AgeVerification.js
 import React, { useState } from 'react';
-import { View, StyleSheet, Image, BackHandler, Platform } from 'react-native';
+import { View, StyleSheet, Image, BackHandler, Platform, Alert } from 'react-native';
 import { Text, Button } from '@rneui/themed';
 import { useAppState, AppActions } from '../../context/AppStateContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logger, LogCategory } from '../../services/LoggingService';
-import { handleError, ErrorType, AppError, tryCatch } from '../../utils/ErrorHandler';
+import { handleError, tryCatch } from '../../utils/ErrorHandler';
 
 const AgeVerification = ({ navigation }) => {
   const { dispatch } = useAppState();
@@ -27,6 +27,9 @@ const AgeVerification = ({ navigation }) => {
         dispatch(AppActions.setAgeVerification(true));
         
         Logger.info(LogCategory.AUTH, 'User confirmed 21+ age verification');
+        
+        // Navigate to Terms of Service screen (add this)
+        navigation.replace('TermsOfService');
       }, LogCategory.AUTH, 'age verification confirmation', true);
     } catch (error) {
       // Error is already logged by tryCatch
