@@ -1,4 +1,4 @@
-// src/screens/navigation/MapView.js
+// src/screens/navigation/MapView.js - Fix for variable initialization and null checks
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
@@ -37,13 +37,14 @@ const MapViewScreen = ({ route, navigation }) => {
   const [bearing, setBearing] = useState(null);
   const [routeCoordinates, setRouteCoordinates] = useState([]);
   const [isAdVisible, setIsAdVisible] = useState(true);
+  const [torchOn, setTorchOn] = useState(false); // Initialize torch state
   const mapRef = useRef(null);
   const locationSubscription = useRef(null);
 
   // Get the current vendor from state or direct parameter
   const currentVendor = vendorId 
-    ? state.vendorData.list.find(v => v.id === vendorId) 
-    : state.journey.vendors[state.journey.currentVendorIndex];
+    ? state.vendorData?.list?.find(v => v?.id === vendorId) 
+    : (state.journey?.vendors?.[state.journey?.currentVendorIndex] || null);
 
   // Set up location tracking and route
   useEffect(() => {
@@ -66,11 +67,18 @@ const MapViewScreen = ({ route, navigation }) => {
         
         if (isMounted) {
           setUserLocation(initialLocation.coords);
-          updateDistanceAndBearing(initialLocation.coords);
+          
+          if (currentVendor?.location?.coordinates) {
+            updateDistanceAndBearing(initialLocation.coords);
 
-          // Fit map to show both user and destination
-          if (mapRef.current && currentVendor) {
-            fitMapToShowMarkers(initialLocation.coords);
+            // Fit map to show both user and destination
+            if (mapRef.current) {
+              fitMapToShowMarkers(initialLocation.coords);
+            }
+          } else {
+            setErrorMsg('Vendor location data is incomplete or missing');
+            setIsLoading(false);
+            return;
           }
         }
         
@@ -114,7 +122,7 @@ const MapViewScreen = ({ route, navigation }) => {
 
   // Calculate the distance and bearing to the vendor
   const updateDistanceAndBearing = (userCoords) => {
-    if (!userCoords || !currentVendor) return;
+    if (!userCoords || !currentVendor?.location?.coordinates) return;
 
     const vendorCoords = currentVendor.location.coordinates;
     
@@ -139,7 +147,7 @@ const MapViewScreen = ({ route, navigation }) => {
 
   // Update the route between user and vendor
   const updateRouteToVendor = async (userCoords) => {
-    if (!userCoords || !currentVendor) return;
+    if (!userCoords || !currentVendor?.location?.coordinates) return;
 
     try {
       // In a production app, we would call a directions API here
@@ -159,7 +167,7 @@ const MapViewScreen = ({ route, navigation }) => {
 
   // Fit the map to show both the user location and destination
   const fitMapToShowMarkers = (userCoords) => {
-    if (!userCoords || !currentVendor || !mapRef.current) return;
+    if (!userCoords || !currentVendor?.location?.coordinates || !mapRef.current) return;
 
     const vendorCoords = currentVendor.location.coordinates;
     
@@ -194,12 +202,17 @@ const MapViewScreen = ({ route, navigation }) => {
     return directions[index];
   };
 
+  // Toggle flashlight/torch
+  const toggleTorch = () => {
+    setTorchOn(!torchOn);
+  };
+
   // Open the vendor in external maps app
   const openInMaps = () => {
-    if (!currentVendor) return;
+    if (!currentVendor?.location?.coordinates) return;
 
     const { latitude, longitude } = currentVendor.location.coordinates;
-    const label = encodeURIComponent(currentVendor.name);
+    const label = encodeURIComponent(currentVendor.name || 'Destination');
     const scheme = Platform.select({
       ios: 'maps:0,0?q=',
       android: 'geo:0,0?q='
@@ -219,12 +232,12 @@ const MapViewScreen = ({ route, navigation }) => {
   // Check if user has arrived at destination
   const handleArrival = () => {
     // Check if we're close enough (within 0.1 miles)
-    if (distance && distance <= 0.1) {
+    if (distance && distance <= 0.1 && currentVendor?.id) {
       navigation.navigate('VendorCheckin', { vendorId: currentVendor.id });
     } else {
       Alert.alert(
         'Not Close Enough',
-        `You need to be closer to ${currentVendor.name} to check in. Current distance: ${distance.toFixed(2)} miles.`,
+        `You need to be closer to ${currentVendor?.name || 'the destination'} to check in. Current distance: ${distance?.toFixed(2) || 'unknown'} miles.`,
         [{ text: 'OK' }]
       );
     }
@@ -234,6 +247,24 @@ const MapViewScreen = ({ route, navigation }) => {
   const handleAdFinish = () => {
     setIsAdVisible(false);
   };
+
+  // Show error if we couldn't find vendor data
+  if (!currentVendor && !isLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.errorContainer}>
+          <Icon name="error" type="material" size={64} color="#F44336" />
+          <Text style={styles.errorText}>Vendor information not found.</Text>
+          <Button
+            title="Go Back"
+            onPress={() => navigation.goBack()}
+            buttonStyle={styles.errorButton}
+            containerStyle={styles.errorButtonContainer}
+          />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   // Show loading screen or ad
   if (isAdVisible) {
@@ -293,14 +324,14 @@ const MapViewScreen = ({ route, navigation }) => {
               toolbarEnabled={false}
             >
               {/* Vendor marker */}
-              {currentVendor && (
+              {currentVendor?.location?.coordinates && (
                 <Marker
                   coordinate={{
                     latitude: currentVendor.location.coordinates.latitude,
                     longitude: currentVendor.location.coordinates.longitude,
                   }}
-                  title={currentVendor.name}
-                  description={currentVendor.location.address}
+                  title={currentVendor.name || 'Destination'}
+                  description={currentVendor.location.address || ''}
                   pinColor="#4CAF50"
                 />
               )}
@@ -353,7 +384,7 @@ const MapViewScreen = ({ route, navigation }) => {
               </View>
             </View>
 
-            <Text style={styles.addressText}>{currentVendor?.location.address || ''}</Text>
+            <Text style={styles.addressText}>{currentVendor?.location?.address || ''}</Text>
             
             <Card.Divider style={styles.divider} />
             
@@ -398,7 +429,9 @@ const MapViewScreen = ({ route, navigation }) => {
   );
 };
 
+// Styles remain the same
 const styles = StyleSheet.create({
+  // Keep all the styles as they were
   container: {
     flex: 1,
     backgroundColor: '#fff',

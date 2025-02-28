@@ -83,6 +83,16 @@ function appReducer(state, action) {
         }
       };
 
+          // In your reducer function
+    case 'SET_CURRENT_VENDOR_INDEX':
+      return {
+        ...state,
+        journey: {
+          ...state.journey,
+          currentVendorIndex: action.payload
+        }
+      };
+
     case ActionTypes.SET_USERNAME:
       return {
         ...state,
@@ -368,6 +378,12 @@ export const AppActions = {
   setUsername: (username) => ({
     type: ActionTypes.SET_USERNAME,
     payload: username
+  }),
+
+    // In your AppActions object definition
+  setCurrentVendorIndex: (index) => ({
+    type: 'SET_CURRENT_VENDOR_INDEX',
+    payload: index
   }),
   
   updatePoints: (points) => ({

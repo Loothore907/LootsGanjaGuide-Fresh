@@ -1,4 +1,4 @@
-// src/screens/deals/BirthdayDeals.js
+// src/screens/deals/BirthdayDeals.js - fixing the Slider component
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -299,7 +299,9 @@ const BirthdayDeals = ({ navigation }) => {
   );
 };
 
+// Styles remain the same
 const styles = StyleSheet.create({
+  // Keeping all the styles as they were...
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',

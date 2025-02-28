@@ -7,7 +7,8 @@ import {
   Linking,
   ActivityIndicator,
   Share,
-  Platform
+  Platform,
+  TouchableOpacity
 } from 'react-native';
 import { 
   Text, 
@@ -29,23 +30,41 @@ const VendorCheckin = ({ route, navigation }) => {
   const [scanned, setScanned] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [scannedVendor, setScannedVendor] = useState(null);
+  const [torchOn, setTorchOn] = useState(false);
   
   // Request camera permissions and check if direct vendor ID was provided
   useEffect(() => {
-    (async () => {
+    let isMounted = true;
+    
+    const setupCamera = async () => {
       if (vendorId) {
         // Skip QR scan if we already have a vendor ID
         handleDirectCheckin(vendorId);
       } else {
-        // Request camera permission
-        const { status } = await Camera.requestCameraPermissionsAsync();
-        setHasPermission(status === 'granted');
-        
-        if (status !== 'granted') {
-          Logger.warn(LogCategory.PERMISSIONS, 'Camera permission was denied');
+        try {
+          // Request camera permission
+          const { status } = await Camera.requestCameraPermissionsAsync();
+          if (isMounted) {
+            setHasPermission(status === 'granted');
+          
+            if (status !== 'granted') {
+              Logger.warn(LogCategory.PERMISSIONS, 'Camera permission was denied');
+            }
+          }
+        } catch (error) {
+          Logger.error(LogCategory.PERMISSIONS, 'Error requesting camera permission', { error });
+          if (isMounted) {
+            setHasPermission(false);
+          }
         }
       }
-    })();
+    };
+    
+    setupCamera();
+    
+    return () => {
+      isMounted = false;
+    };
   }, []);
   
   const handleDirectCheckin = async (id) => {
@@ -221,6 +240,11 @@ const VendorCheckin = ({ route, navigation }) => {
     navigation.goBack();
   };
   
+  // Toggle flashlight/torch
+  const toggleTorch = () => {
+    setTorchOn(prevTorchOn => !prevTorchOn);
+  };
+  
   if (hasPermission === null && !vendorId) {
     return (
       <View style={styles.centeredContainer}>
@@ -317,12 +341,17 @@ const VendorCheckin = ({ route, navigation }) => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.scannerContainer}>
-        <Camera
-          style={styles.scanner}
-          onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
-          type={Camera.Constants.Type.back}
-        >
-       
+        
+        
+      <Camera
+        style={styles.scanner}
+        onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+        type={Camera.Constants ? Camera.Constants.Type.back : 0}
+        flashMode={torchOn 
+          ? (Camera.Constants ? Camera.Constants.FlashMode.torch : 1) 
+          : (Camera.Constants ? Camera.Constants.FlashMode.off : 0)}
+      >        
+        
           <View style={styles.overlay}>
             <View style={styles.unfilled} />
             <View style={styles.row}>
@@ -338,6 +367,19 @@ const VendorCheckin = ({ route, navigation }) => {
               Scan the QR code at the dispensary to check in
             </Text>
           </View>
+          
+          {/* Torch toggle button */}
+          <TouchableOpacity 
+            style={styles.torchButton}
+            onPress={toggleTorch}
+          >
+            <Icon 
+              name={torchOn ? "flash-on" : "flash-off"} 
+              type="material" 
+              color="#FFFFFF" 
+              size={24} 
+            />
+          </TouchableOpacity>
           
           {scanned && !isLoading && (
             <Button
@@ -399,8 +441,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   scanner: {
-    height: 300,
-    width: 300,
+    flex: 1,
+    width: '100%',
+    height: '100%',
   },
   overlay: {
     position: 'absolute',
@@ -435,6 +478,17 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
     overflow: 'hidden',
+  },
+  torchButton: {
+    position: 'absolute',
+    top: 80,
+    right: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 30,
+    width: 50,
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   scanAgainButton: {
     backgroundColor: '#4CAF50',

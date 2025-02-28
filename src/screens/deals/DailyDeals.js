@@ -174,6 +174,7 @@ const DailyDeals = ({ navigation }) => {
           type="clear"
           onPress={() => navigation.navigate('VendorProfile', { vendorId: item.vendorId })}
         />
+      
       <Button
         title="Directions"
         type="clear"
@@ -183,14 +184,74 @@ const DailyDeals = ({ navigation }) => {
           size: 20,
           color: "#2089dc"
         }}
-        onPress={() => {
-          // Make sure we're using the properly registered name from app.js
-          navigation.navigate('MapView', { 
-            vendorId: item.vendorId,
-            singleVendorMode: true  // Add this flag
-          });
+        onPress={async () => {
+          try {
+            // Create a single-vendor journey with complete vendor structure
+            const selectedVendor = {
+              id: item.vendorId,
+              name: item.vendorName,
+              location: {
+                address: item.vendorAddress || "Address unavailable",
+                coordinates: {
+                  latitude: item.vendorCoordinates?.latitude || 61.2175,
+                  longitude: item.vendorCoordinates?.longitude || -149.8584
+                }
+              },
+              distance: item.vendorDistance || 0,
+              // Add the deals structure that RoutePreview expects
+              deals: {
+                daily: {
+                  // Initialize daily deals structure for all days
+                  monday: [],
+                  tuesday: [],
+                  wednesday: [],
+                  thursday: [],
+                  friday: [],
+                  saturday: [],
+                  sunday: []
+                },
+                birthday: null,
+                special: []
+              }
+            };
+            
+            // Add the current deal to the appropriate day
+            const today = getDayOfWeek();
+            selectedVendor.deals.daily[today] = [{
+              description: item.description || item.title || "Daily Deal",
+              discount: item.discount || "Special Offer",
+              restrictions: item.restrictions || []
+            }];
+            
+            // Start journey in app state with just one vendor
+            dispatch(AppActions.startJourney({
+              dealType: 'daily',
+              vendors: [selectedVendor],
+              maxDistance: maxDistance || 25,
+              totalVendors: 1
+            }));
+            
+            // Update route information
+            dispatch(AppActions.updateRoute({
+              coordinates: [selectedVendor.location.coordinates],
+              totalDistance: selectedVendor.distance,
+              estimatedTime: Math.round(selectedVendor.distance * 3) // 3 min per mile estimate
+            }));
+            
+            Logger.info(LogCategory.JOURNEY, 'Single vendor journey created', {
+              vendorName: selectedVendor.name,
+              distance: selectedVendor.distance
+            });
+            
+            // Navigate to route preview (same as Birthday Deals flow)
+            navigation.navigate('RoutePreview');
+          } catch (error) {
+            Logger.error(LogCategory.NAVIGATION, 'Error creating single vendor journey', { error });
+            Alert.alert('Navigation Error', 'Unable to get directions at this time.');
+          }
         }}
       />
+
     </View>
     </Card>
   );

@@ -1,4 +1,6 @@
 // src/services/Vendor.Service.js
+import { Logger, LogCategory } from '../services/LoggingService';
+
 const mockVendors = [
     {
       id: 'v1',
@@ -217,29 +219,94 @@ const mockVendors = [
   
   export const vendorService = {
     getAllVendors: () => {
-      return Promise.resolve(mockVendors);
+      try {
+        Logger.info(LogCategory.VENDORS, 'Getting all vendors');
+        return Promise.resolve(mockVendors);
+      } catch (error) {
+        Logger.error(LogCategory.VENDORS, 'Error getting all vendors', { error });
+        return Promise.resolve([]);
+      }
     },
     
     getVendorById: (id) => {
-      const vendor = mockVendors.find(v => v.id === id);
-      return Promise.resolve(vendor || null);
+      try {
+        Logger.info(LogCategory.VENDORS, 'Getting vendor by ID', { vendorId: id });
+        const vendor = mockVendors.find(v => v.id === id);
+        if (!vendor) {
+          Logger.warn(LogCategory.VENDORS, `Vendor with ID ${id} not found`);
+        }
+        return Promise.resolve(vendor || null);
+      } catch (error) {
+        Logger.error(LogCategory.VENDORS, `Error getting vendor with ID ${id}`, { error });
+        return Promise.resolve(null);
+      }
     },
     
     searchVendors: ({ dealType, maxDistance, maxResults, currentLocation }) => {
-      // Filter vendors by dealType and maxDistance
-      let filtered = mockVendors;
-      
-      // Filter by distance (simple version for mock)
-      if (maxDistance) {
-        filtered = filtered.filter(v => v.distance <= maxDistance);
+      try {
+        Logger.info(LogCategory.VENDORS, 'Searching vendors', {
+          dealType,
+          maxDistance,
+          maxResults
+        });
+        
+        // Filter vendors by dealType and maxDistance
+        let filtered = [...mockVendors];
+        
+        // Filter by deal type if specified
+        if (dealType) {
+          filtered = filtered.filter(vendor => {
+            // For birthday deals
+            if (dealType === 'birthday' && vendor.deals.birthday) {
+              return true;
+            }
+            // For daily deals
+            if (dealType === 'daily' && vendor.deals.daily) {
+              return true;
+            }
+            // For special deals
+            if (dealType === 'special' && vendor.deals.special) {
+              return true;
+            }
+            return false;
+          });
+        }
+        
+        // Filter by distance if specified
+        if (maxDistance) {
+          filtered = filtered.filter(v => v.distance <= maxDistance);
+        }
+        
+        // Sort by distance
+        filtered.sort((a, b) => a.distance - b.distance);
+        
+        // Limit results if specified
+        if (maxResults && maxResults > 0) {
+          filtered = filtered.slice(0, maxResults);
+        }
+        
+        return Promise.resolve(filtered);
+      } catch (error) {
+        Logger.error(LogCategory.VENDORS, 'Error searching vendors', { error });
+        return Promise.resolve([]);
       }
-      
-      // Limit results
-      if (maxResults) {
-        filtered = filtered.slice(0, maxResults);
-      }
-      
-      return Promise.resolve(filtered);
+    },
+    
+    // Add additional methods that might be used in the app
+    getFavoriteVendors: () => {
+      // Mock implementation
+      return Promise.resolve(mockVendors.slice(0, 2));
+    },
+    
+    getRecentVendors: () => {
+      // Mock implementation
+      return Promise.resolve(mockVendors.slice(0, 3));
+    },
+    
+    toggleFavorite: (vendorId) => {
+      // Mock implementation
+      Logger.info(LogCategory.VENDORS, 'Toggling favorite status', { vendorId });
+      return Promise.resolve({ success: true });
     }
   };
   
