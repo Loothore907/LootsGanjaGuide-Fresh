@@ -7,9 +7,19 @@ import {
   TouchableOpacity, 
   ActivityIndicator,
   ScrollView,
-  Alert
+  Alert,
+  Image
 } from 'react-native';
-import { Text, Button, Card, Icon, CheckBox, Chip, Divider } from '@rneui/themed';
+import { 
+  Text, 
+  Button, 
+  Card, 
+  Icon, 
+  CheckBox, 
+  Chip, 
+  Divider,
+  Overlay 
+} from '@rneui/themed';
 import { useAppState, AppActions } from '../../context/AppStateContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
@@ -25,17 +35,18 @@ const DailyDeals = ({ navigation }) => {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [maxDistance, setMaxDistance] = useState(state.dealFilters.maxDistance || 25);
   const [currentDay, setCurrentDay] = useState(getDayOfWeek());
+  const [showCategories, setShowCategories] = useState(false);
   
   // Product categories
   const categories = [
     { id: 'flower', label: 'Flower', icon: 'local-florist' },
     { id: 'prerolls', label: 'Pre-rolls', icon: 'filter-list' },
-    { id: 'concentrates', label: 'Concentrates', icon: 'opacity' },
     { id: 'cartridges', label: 'Cartridges', icon: 'battery-std' },
+    { id: 'concentrates', label: 'Concentrates', icon: 'opacity' },
     { id: 'edibles', label: 'Edibles', icon: 'restaurant' },
-    { id: 'tinctures', label: 'Tinctures', icon: 'colorize' },
-    { id: 'topicals', label: 'Topicals', icon: 'spa' },
-    { id: 'accessories', label: 'Accessories', icon: 'devices' }
+    { id: 'accessories', label: 'Accessories', icon: 'devices' },
+    { id: 'misc', label: 'Miscellaneous', icon: 'more-horiz' },
+    { id: 'everyday', label: 'Everyday Deals', icon: 'local-offer' }
   ];
   
   // Days of the week
@@ -73,7 +84,17 @@ const DailyDeals = ({ navigation }) => {
         };
         
         const dailyDeals = await getDailyDeals(currentDay, options);
-        setDeals(dailyDeals);
+        
+        // Sort by "true value" (simulated here - you would implement your own logic)
+        const sortedDeals = dailyDeals.sort((a, b) => {
+          // Calculate "true value" - this is just an example
+          // You would replace this with your actual value calculation
+          const valueA = parseInt(a.discount) || 0;
+          const valueB = parseInt(b.discount) || 0;
+          return valueB - valueA; // Higher discount first
+        });
+        
+        setDeals(sortedDeals);
         
         Logger.info(LogCategory.DEALS, 'Loaded daily deals', {
           day: currentDay,
@@ -90,11 +111,7 @@ const DailyDeals = ({ navigation }) => {
   };
   
   const toggleDealSelection = (dealId) => {
-    if (selectedDeals.includes(dealId)) {
-      setSelectedDeals(selectedDeals.filter(id => id !== dealId));
-    } else {
-      setSelectedDeals([...selectedDeals, dealId]);
-    }
+    // ... existing code ...
   };
   
   const handleCategorySelect = (categoryId) => {
@@ -106,65 +123,10 @@ const DailyDeals = ({ navigation }) => {
   };
   
   const handleCreateJourney = async () => {
-    if (selectedDeals.length === 0) {
-      Alert.alert(
-        'No Deals Selected',
-        'Please select at least one deal to create a journey.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-    
-    setIsCreatingRoute(true);
-    try {
-      await tryCatch(async () => {
-        // Get selected vendor IDs
-        const selectedVendorIds = selectedDeals.map(dealId => {
-          const deal = deals.find(d => d.id === dealId);
-          return deal.vendorId;
-        });
-        
-        // Create optimized route
-        const route = await createOptimizedRoute(selectedVendorIds, {
-          // Use current location in a real app
-          startLocation: {
-            latitude: 61.217381,
-            longitude: -149.863129
-          }
-        });
-        
-        // Start journey in app state
-        dispatch(AppActions.startJourney({
-          dealType: 'daily',
-          vendors: route.vendors,
-          maxDistance: maxDistance,
-          totalVendors: route.vendors.length
-        }));
-        
-        // Update route information
-        dispatch(AppActions.updateRoute({
-          coordinates: route.vendors.map(v => v.location.coordinates),
-          totalDistance: route.totalDistance,
-          estimatedTime: route.estimatedTime
-        }));
-        
-        Logger.info(LogCategory.JOURNEY, 'Daily deal journey created', {
-          vendorCount: route.vendors.length,
-          totalDistance: route.totalDistance,
-          estimatedTime: route.estimatedTime
-        });
-        
-        // Navigate to route preview
-        navigation.navigate('RoutePreview');
-      }, LogCategory.DEALS, 'creating daily deal journey', true);
-    } catch (error) {
-      // Error already logged by tryCatch
-    } finally {
-      setIsCreatingRoute(false);
-    }
+    // ... existing code ...
   };
   
-  const renderDealItem = ({ item }) => (
+  const renderDealItem = ({ item, index }) => (
     <Card containerStyle={styles.dealCard}>
       <TouchableOpacity
         style={styles.cardContent}
@@ -212,88 +174,128 @@ const DailyDeals = ({ navigation }) => {
           type="clear"
           onPress={() => navigation.navigate('VendorProfile', { vendorId: item.vendorId })}
         />
-        <Button
-          title="Directions"
-          type="clear"
-          icon={{
-            name: "directions",
-            type: "material",
-            size: 20,
-            color: "#2089dc"
-          }}
-          onPress={() => navigation.navigate('MapView', { vendorId: item.vendorId })}
-        />
-      </View>
+      <Button
+        title="Directions"
+        type="clear"
+        icon={{
+          name: "directions",
+          type: "material",
+          size: 20,
+          color: "#2089dc"
+        }}
+        onPress={() => {
+          // Make sure we're using the properly registered name from app.js
+          navigation.navigate('MapView', { 
+            vendorId: item.vendorId,
+            singleVendorMode: true  // Add this flag
+          });
+        }}
+      />
+    </View>
     </Card>
   );
   
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.filtersContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.daysScrollView}>
-          {daysOfWeek.map(day => (
-            <TouchableOpacity
-              key={day.id}
-              style={[
-                styles.dayButton,
-                currentDay === day.id && styles.selectedDayButton
-              ]}
-              onPress={() => handleDaySelect(day.id)}
-            >
-              <Text 
+      {/* Banner for top deals */}
+      <View style={styles.topDealsBanner}>
+        <Text style={styles.bannerTitle}>Today's Top Deals</Text>
+        <Text style={styles.bannerSubtitle}>The best cannabis deals in Anchorage</Text>
+        <Button
+          title="Browse Categories"
+          type="outline"
+          icon={{
+            name: "category",
+            type: "material",
+            size: 18,
+            color: "#4CAF50"
+          }}
+          buttonStyle={styles.categoryButton}
+          containerStyle={styles.categoryButtonContainer}
+          titleStyle={{ color: '#4CAF50' }}
+          onPress={() => setShowCategories(true)}
+        />
+      </View>
+      
+      {/* Categories Overlay */}
+      <Overlay 
+        isVisible={showCategories} 
+        onBackdropPress={() => setShowCategories(false)}
+        overlayStyle={styles.overlay}
+      >
+        <View style={styles.overlayContent}>
+          <Text style={styles.overlayTitle}>Browse by Category</Text>
+          
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.daysScrollView}>
+            {daysOfWeek.map(day => (
+              <TouchableOpacity
+                key={day.id}
                 style={[
-                  styles.dayText,
-                  currentDay === day.id && styles.selectedDayText
+                  styles.dayButton,
+                  currentDay === day.id && styles.selectedDayButton
                 ]}
+                onPress={() => handleDaySelect(day.id)}
               >
-                {day.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-        
-        <Divider width={1} style={styles.divider} />
-        
-        <Text style={styles.sectionTitle}>Filter by Category</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoriesScrollView}>
-          {categories.map(category => (
-            <Chip
-              key={category.id}
-              title={category.label}
-              icon={{
-                name: category.icon,
-                type: 'material',
-                size: 16,
-                color: selectedCategory === category.id ? 'white' : '#666666',
-              }}
-              buttonStyle={[
-                styles.categoryChip,
-                selectedCategory === category.id && styles.selectedCategoryChip
-              ]}
-              titleStyle={[
-                styles.categoryChipTitle,
-                selectedCategory === category.id && styles.selectedCategoryChipTitle
-              ]}
-              onPress={() => handleCategorySelect(category.id)}
-              containerStyle={styles.chipContainer}
-            />
-          ))}
-        </ScrollView>
-        
-        <View style={styles.selectedCount}>
-          <Text style={styles.selectedCountText}>
-            {selectedDeals.length} deals selected
-          </Text>
+                <Text 
+                  style={[
+                    styles.dayText,
+                    currentDay === day.id && styles.selectedDayText
+                  ]}
+                >
+                  {day.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          
+          <Divider width={1} style={styles.divider} />
+          
+          <Text style={styles.sectionTitle}>Product Categories</Text>
+          <ScrollView style={{maxHeight: 300}}>
+            <View style={styles.categoriesGrid}>
+              {categories.map(category => (
+                <Chip
+                  key={category.id}
+                  title={category.label}
+                  icon={{
+                    name: category.icon,
+                    type: 'material',
+                    size: 16,
+                    color: selectedCategory === category.id ? 'white' : '#666666',
+                  }}
+                  buttonStyle={[
+                    styles.categoryChip,
+                    selectedCategory === category.id && styles.selectedCategoryChip
+                  ]}
+                  titleStyle={[
+                    styles.categoryChipTitle,
+                    selectedCategory === category.id && styles.selectedCategoryChipTitle
+                  ]}
+                  onPress={() => handleCategorySelect(category.id)}
+                  containerStyle={styles.chipContainer}
+                />
+              ))}
+            </View>
+          </ScrollView>
           
           <Button
-            title="Refresh"
-            type="outline"
-            onPress={loadDailyDeals}
-            loading={isLoading}
-            containerStyle={styles.refreshButton}
+            title="Apply Filters"
+            buttonStyle={{ backgroundColor: '#4CAF50' }}
+            containerStyle={{ marginTop: 20 }}
+            onPress={() => {
+              loadDailyDeals();
+              setShowCategories(false);
+            }}
+          />
+          
+          <Button
+            title="Close"
+            type="clear"
+            containerStyle={{ marginTop: 10 }}
+            onPress={() => setShowCategories(false)}
           />
         </View>
-      </View>
+      </Overlay>
       
       {isLoading ? (
         <View style={styles.loadingContainer}>
@@ -303,7 +305,7 @@ const DailyDeals = ({ navigation }) => {
       ) : (
         <>
           <FlatList
-            data={deals}
+            data={deals.slice(0, 10)} // Only show top 10 deals
             renderItem={renderDealItem}
             keyExtractor={(item) => item.id}
             contentContainerStyle={styles.listContainer}
@@ -338,195 +340,56 @@ const DailyDeals = ({ navigation }) => {
   );
 };
 
+// Add these styles to your existing styles
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  filtersContainer: {
+  // ... keep your existing styles ...
+  
+  topDealsBanner: {
+    backgroundColor: '#4CAF50',
     padding: 16,
-    backgroundColor: '#F5F5F5',
-    borderBottomWidth: 1,
-    borderBottomColor: '#EEEEEE',
+    alignItems: 'center',
   },
-  daysScrollView: {
-    flexDirection: 'row',
-    marginBottom: 16,
+  bannerTitle: {
+    color: 'white',
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginBottom: 4,
   },
-  dayButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    marginRight: 8,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#DDDDDD',
-  },
-  selectedDayButton: {
-    backgroundColor: '#4CAF50',
-    borderColor: '#4CAF50',
-  },
-  dayText: {
+  bannerSubtitle: {
+    color: 'white',
     fontSize: 14,
-    color: '#666666',
-  },
-  selectedDayText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
-  divider: {
-    marginVertical: 16,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  categoriesScrollView: {
-    flexDirection: 'row',
     marginBottom: 16,
   },
-  chipContainer: {
-    marginRight: 8,
+  categoryButton: {
+    backgroundColor: 'white',
+    borderColor: 'white',
+    paddingHorizontal: 20,
   },
-  categoryChip: {
-    backgroundColor: '#FFFFFF',
+  categoryButtonContainer: {
+    width: '80%',
   },
-  selectedCategoryChip: {
-    backgroundColor: '#4CAF50',
+  overlay: {
+    width: '90%',
+    maxHeight: '80%',
+    borderRadius: 10,
+    padding: 20,
   },
-  categoryChipTitle: {
-    color: '#666666',
+  overlayContent: {
+    flex: 1,
   },
-  selectedCategoryChipTitle: {
-    color: '#FFFFFF',
+  overlayTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 20,
   },
-  selectedCount: {
+  categoriesGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    paddingHorizontal: 10,
   },
-  selectedCountText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  refreshButton: {
-    width: 100,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: '#666666',
-  },
-  listContainer: {
-    padding: 8,
-  },
-  dealCard: {
-    borderRadius: 8,
-    padding: 0,
-    overflow: 'hidden',
-  },
-  cardContent: {
-    flexDirection: 'row',
-    padding: 16,
-  },
-  selectionIndicator: {
-    justifyContent: 'flex-start',
-  },
-  checkbox: {
-    margin: 0,
-    padding: 0,
-    backgroundColor: 'transparent',
-    borderWidth: 0,
-  },
-  dealInfo: {
-    flex: 1,
-  },
-  vendorName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 4,
-  },
-  dealTitle: {
-    fontSize: 14,
-    color: '#666666',
-    marginBottom: 8,
-  },
-  discountContainer: {
-    backgroundColor: '#4CAF50',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    marginBottom: 8,
-  },
-  discountText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  restrictionsContainer: {
-    marginBottom: 8,
-  },
-  restrictionsTitle: {
-    fontSize: 12,
-    fontWeight: 'bold',
-    color: '#666666',
-    marginBottom: 4,
-  },
-  restrictionText: {
-    fontSize: 12,
-    color: '#666666',
-  },
-  distanceContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  distanceText: {
-    marginLeft: 4,
-    fontSize: 12,
-    color: '#666666',
-  },
-  cardActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  emptyContainer: {
-    padding: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyText: {
-    marginTop: 16,
-    fontSize: 16,
-    fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  emptySubtext: {
-    marginTop: 8,
-    fontSize: 14,
-    color: '#666666',
-    textAlign: 'center',
-  },
-  createJourneyContainer: {
-    padding: 16,
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#EEEEEE',
-  },
-  createJourneyButtonContainer: {
-    width: '100%',
-  },
-  createJourneyButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
-    paddingVertical: 12,
-  },
+  // Continue with your existing styles...
 });
 
 export default DailyDeals;

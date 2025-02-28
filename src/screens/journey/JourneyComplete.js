@@ -166,7 +166,10 @@ const JourneyComplete = ({ navigation }) => {
             buttonStyle={styles.homeButton}
             containerStyle={styles.buttonContainer}
             titleStyle={{ color: '#4CAF50' }}
-            onPress={() => navigation.navigate('MainTabs')}
+            onPress={() => navigation.reset({
+              index: 0,
+              routes: [{ name: 'MainTabs' }],
+            })}
           />
         </View>
       </ScrollView>

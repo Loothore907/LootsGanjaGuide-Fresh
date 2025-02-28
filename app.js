@@ -20,6 +20,7 @@ import UserSetup from './src/screens/auth/UserSetup';
 import Dashboard from './src/screens/home/Dashboard';
 import DealSelection from './src/screens/deals/DealSelection';
 import RoutePreview from './src/screens/navigation/RoutePreview';
+import RouteMapView from './src/screens/navigation/RouteMapView';
 import MapView from './src/screens/navigation/MapView';
 import VendorCheckin from './src/screens/vendor/VendorCheckin';
 import VendorProfile from './src/screens/vendor/VendorProfile';
@@ -214,6 +215,13 @@ const AppContent = () => {
           component={RoutePreview}
           options={{ headerShown: true, title: 'Your Journey' }}
         />
+
+        <Stack.Screen 
+          name="RouteMapView" 
+          component={RouteMapView}
+          options={{ headerShown: true, title: 'Route Overview' }}
+        />
+
         <Stack.Screen 
           name="VendorCheckin" 
           component={VendorCheckin}

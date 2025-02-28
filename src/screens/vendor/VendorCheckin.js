@@ -5,7 +5,9 @@ import {
   StyleSheet, 
   Alert,
   Linking,
-  ActivityIndicator
+  ActivityIndicator,
+  Share,
+  Platform
 } from 'react-native';
 import { 
   Text, 
@@ -19,155 +21,14 @@ import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
 import { checkInAtVendor, getVendorById } from '../../services/MockDataService';
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  centeredContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#FFFFFF',
-  },
-  permissionText: {
-    textAlign: 'center',
-    marginTop: 20,
-    fontSize: 16,
-    color: '#666666',
-    marginBottom: 20,
-  },
-  permissionButton: {
-    backgroundColor: '#4CAF50',
-  },
-  buttonContainer: {
-    width: '80%',
-    marginTop: 20,
-  },
-  scannerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  scanner: {
-    height: 300,
-    width: 300,
-  },
-  overlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0)',
-  },
-  unfilled: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  row: {
-    flexDirection: 'row',
-    height: 300,
-  },
-  instructionsContainer: {
-    position: 'absolute',
-    top: 150,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  instructionsText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    textAlign: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  scanAgainButton: {
-    backgroundColor: '#4CAF50',
-  },
-  scanAgainButtonContainer: {
-    position: 'absolute',
-    bottom: 100,
-  },
-  cancelButton: {
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  cancelButtonContainer: {
-    position: 'absolute',
-    bottom: 40,
-    width: 120,
-  },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    marginTop: 16,
-  },
-  confirmContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#FFFFFF',
-  },
-  confirmTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  confirmVendor: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  confirmAddress: {
-    fontSize: 16,
-    color: '#666666',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  rewardContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E8F5E9',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginBottom: 20,
-  },
-  rewardText: {
-    marginLeft: 8,
-    fontSize: 16,
-    color: '#4CAF50',
-    fontWeight: 'bold',
-  },
-  confirmButton: {
-    backgroundColor: '#4CAF50',
-  },
-});
-
 const VendorCheckin = ({ route, navigation }) => {
   const { state, dispatch } = useAppState();
+  const { vendorId, fromJourney } = route.params || {};
+  
   const [hasPermission, setHasPermission] = useState(null);
   const [scanned, setScanned] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [scannedVendor, setScannedVendor] = useState(null);
-  
-  // Get vendorId from route params if exists (for direct check-in)
-  const vendorId = route.params?.vendorId;
   
   // Request camera permissions and check if direct vendor ID was provided
   useEffect(() => {
@@ -282,8 +143,8 @@ const VendorCheckin = ({ route, navigation }) => {
               onPress: () => handleShareCheckin() 
             },
             {
-              text: 'OK',
-              onPress: () => navigation.navigate('VendorProfile', { vendorId: scannedVendor.id })
+              text: 'Continue',
+              onPress: () => handleContinueJourney()
             }
           ]
         );
@@ -300,12 +161,60 @@ const VendorCheckin = ({ route, navigation }) => {
     }
   };
   
-  const handleShareCheckin = () => {
-    // In a real app, this would integrate with social media
-    Alert.alert(
-      'Social Share',
-      'This feature will allow you to share your check-in on social media. It is currently under development.'
-    );
+  const handleShareCheckin = async () => {
+    if (!scannedVendor) return;
+    
+    try {
+      // Prepare share message
+      const shareMessage = `I just checked in at ${scannedVendor.name} using Loot's Ganja Guide! #LootsGanjaGuide #Cannabis #${scannedVendor.name.replace(/\s+/g, '')}`;
+      
+      // Share using native share dialog
+      const result = await Share.share({
+        message: shareMessage,
+        title: 'Loot\'s Ganja Guide Check-in'
+      });
+      
+      if (result.action === Share.sharedAction) {
+        if (result.activityType) {
+          // Shared with activity type of result.activityType
+          Logger.info(LogCategory.SOCIAL, 'User shared check-in', {
+            platform: result.activityType
+          });
+        } else {
+          // Shared
+          Logger.info(LogCategory.SOCIAL, 'User shared check-in');
+        }
+        
+        // After sharing, continue with journey if applicable
+        handleContinueJourney();
+      } else if (result.action === Share.dismissedAction) {
+        // Dismissed
+        Logger.info(LogCategory.SOCIAL, 'User dismissed share dialog');
+        
+        // Still continue with journey if applicable
+        handleContinueJourney();
+      }
+    } catch (error) {
+      Logger.error(LogCategory.SOCIAL, 'Error sharing check-in', { error });
+      Alert.alert('Sharing Failed', 'Could not share your check-in. Please try again.');
+      
+      // Continue anyway
+      handleContinueJourney();
+    }
+  };
+  
+  const handleContinueJourney = () => {
+    // Check if we're in a journey
+    if (fromJourney) {
+      // Advance to next vendor in journey
+      dispatch(AppActions.nextVendor());
+      
+      // Navigate back to route view
+      navigation.navigate('RouteMapView');
+    } else {
+      // Just go to vendor profile
+      navigation.navigate('VendorProfile', { vendorId: scannedVendor.id });
+    }
   };
   
   const handleCancel = () => {
@@ -352,7 +261,10 @@ const VendorCheckin = ({ route, navigation }) => {
       <SafeAreaView style={styles.container}>
         <View style={styles.confirmContainer}>
           <Icon name="check-circle" type="material" size={64} color="#4CAF50" />
-          <Text style={styles.confirmTitle}>Ready to Check In</Text>
+          <Text style={styles.confirmTitle}>Welcome to {scannedVendor.name}!</Text>
+          <Text style={styles.confirmMessage}>
+            Don't forget to check in to earn points and share your visit!
+          </Text>
           <Text style={styles.confirmVendor}>{scannedVendor.name}</Text>
           <Text style={styles.confirmAddress}>{scannedVendor.location.address}</Text>
           
@@ -376,8 +288,23 @@ const VendorCheckin = ({ route, navigation }) => {
           />
           
           <Button
-            title="Cancel"
+            title="Share to Social Media"
+            icon={{
+              name: "share",
+              type: "material",
+              size: 20,
+              color: "#4CAF50"
+            }}
             type="outline"
+            buttonStyle={styles.shareButton}
+            containerStyle={styles.buttonContainer}
+            titleStyle={{ color: '#4CAF50' }}
+            onPress={handleShareCheckin}
+          />
+          
+          <Button
+            title="Cancel"
+            type="clear"
             onPress={handleCancel}
             containerStyle={styles.buttonContainer}
           />
@@ -394,49 +321,206 @@ const VendorCheckin = ({ route, navigation }) => {
           style={styles.scanner}
           onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
           type={Camera.Constants.Type.back}
-        />
+        >
        
-        <View style={styles.overlay}>
-          <View style={styles.unfilled} />
-          <View style={styles.row}>
+          <View style={styles.overlay}>
             <View style={styles.unfilled} />
-            <View style={styles.scanner} />
+            <View style={styles.row}>
+              <View style={styles.unfilled} />
+              <View style={styles.scanner} />
+              <View style={styles.unfilled} />
+            </View>
             <View style={styles.unfilled} />
           </View>
-          <View style={styles.unfilled} />
-        </View>
-        
-        <View style={styles.instructionsContainer}>
-          <Text style={styles.instructionsText}>
-            Scan the QR code at the dispensary to check in
-          </Text>
-        </View>
-        
-        {scanned && !isLoading && (
+          
+          <View style={styles.instructionsContainer}>
+            <Text style={styles.instructionsText}>
+              Scan the QR code at the dispensary to check in
+            </Text>
+          </View>
+          
+          {scanned && !isLoading && (
+            <Button
+              title="Tap to Scan Again"
+              onPress={() => setScanned(false)}
+              buttonStyle={styles.scanAgainButton}
+              containerStyle={styles.scanAgainButtonContainer}
+            />
+          )}
+          
+          {isLoading && (
+            <View style={styles.loadingOverlay}>
+              <ActivityIndicator size="large" color="#FFFFFF" />
+              <Text style={styles.loadingText}>Processing...</Text>
+            </View>
+          )}
+          
           <Button
-            title="Tap to Scan Again"
-            onPress={() => setScanned(false)}
-            buttonStyle={styles.scanAgainButton}
-            containerStyle={styles.scanAgainButtonContainer}
+            title="Cancel"
+            onPress={handleCancel}
+            buttonStyle={styles.cancelButton}
+            containerStyle={styles.cancelButtonContainer}
           />
-        )}
-        
-        {isLoading && (
-          <View style={styles.loadingOverlay}>
-            <ActivityIndicator size="large" color="#FFFFFF" />
-            <Text style={styles.loadingText}>Processing...</Text>
-          </View>
-        )}
-        
-        <Button
-          title="Cancel"
-          onPress={handleCancel}
-          buttonStyle={styles.cancelButton}
-          containerStyle={styles.cancelButtonContainer}
-        />
+        </Camera>
       </View>
     </SafeAreaView>
   );
 };
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  centeredContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#FFFFFF',
+  },
+  permissionText: {
+    textAlign: 'center',
+    marginTop: 20,
+    fontSize: 16,
+    color: '#666666',
+    marginBottom: 20,
+  },
+  permissionButton: {
+    backgroundColor: '#4CAF50',
+  },
+  buttonContainer: {
+    width: '80%',
+    marginTop: 20,
+  },
+  scannerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scanner: {
+    height: 300,
+    width: 300,
+  },
+  overlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0)',
+  },
+  unfilled: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  row: {
+    flexDirection: 'row',
+    height: 300,
+  },
+  instructionsContainer: {
+    position: 'absolute',
+    bottom: 150,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  instructionsText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    textAlign: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 24,
+    paddingVertical: 8,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  scanAgainButton: {
+    backgroundColor: '#4CAF50',
+  },
+  scanAgainButtonContainer: {
+    position: 'absolute',
+    bottom: 100,
+  },
+  cancelButton: {
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  cancelButtonContainer: {
+    position: 'absolute',
+    bottom: 40,
+    width: 120,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginTop: 16,
+  },
+  confirmContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#FFFFFF',
+  },
+  confirmTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginTop: 20,
+    marginBottom: 10,
+    textAlign: 'center',
+    color: '#4CAF50',
+  },
+  confirmMessage: {
+    fontSize: 16,
+    textAlign: 'center',
+    color: '#666666',
+    marginBottom: 20,
+  },
+  confirmVendor: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333333',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  confirmAddress: {
+    fontSize: 16,
+    color: '#666666',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  rewardContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginBottom: 20,
+  },
+  rewardText: {
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#4CAF50',
+    fontWeight: 'bold',
+  },
+  confirmButton: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  shareButton: {
+    borderColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+});
 
 export default VendorCheckin;

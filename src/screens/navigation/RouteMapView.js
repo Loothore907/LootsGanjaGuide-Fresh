@@ -194,6 +194,15 @@ const RouteMapView = ({ navigation }) => {
     );
   };
 
+  // Handle "I'm Here" button click for arrival confirmation
+  const handleArrivalConfirmation = (vendor) => {
+    // Navigate to check-in screen
+    navigation.navigate('VendorCheckin', { 
+      vendorId: vendor.id,
+      fromJourney: true 
+    });
+  };
+
   // Render each vendor in the journey list
   const renderVendorItem = ({ item, index }) => (
     <ListItem
@@ -218,9 +227,12 @@ const RouteMapView = ({ navigation }) => {
       </ListItem.Content>
       
       {index === currentVendorIndex ? (
-        <View style={styles.currentStopBadge}>
-          <Text style={styles.currentStopText}>Current Stop</Text>
-        </View>
+        <TouchableOpacity 
+          style={styles.imHereButton}
+          onPress={() => handleArrivalConfirmation(item)}
+        >
+          <Text style={styles.imHereText}>I'm Here</Text>
+        </TouchableOpacity>
       ) : (
         <Icon name="chevron-right" type="material" color="#666" />
       )}
@@ -543,16 +555,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
   },
-  currentStopBadge: {
+  imHereButton: {
     backgroundColor: '#4CAF50',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
   },
-  currentStopText: {
-    color: '#fff',
-    fontSize: 12,
+  imHereText: {
+    color: 'white',
     fontWeight: 'bold',
+    fontSize: 12,
   },
   actionButtons: {
     marginTop: 16,

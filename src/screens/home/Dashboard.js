@@ -72,9 +72,18 @@ const Dashboard = ({ navigation }) => {
   };
   
   const navigateToDealType = (dealType) => {
-    navigation.navigate('DealSelection', { initialDealType: dealType });
+    if (dealType === 'birthday') {
+      // Birthday deals go to slider screen
+      navigation.navigate('DealSelection', { initialDealType: 'birthday', showOnlyBirthday: true });
+    } else if (dealType === 'daily') {
+      // Daily deals go directly to daily deals list
+      navigation.navigate('DailyDeals');
+    } else if (dealType === 'special') {
+      // Special deals go directly to special deals list
+      navigation.navigate('SpecialDeals');
+    }
   };
-  
+    
   const navigateToVendorProfile = (vendorId) => {
     navigation.navigate('VendorProfile', { vendorId });
   };

@@ -5,6 +5,7 @@ import { Text, Button, Card, Icon, Divider } from '@rneui/themed';
 import { useAppState } from '../../context/AppStateContext';
 import { vendorService } from '../../services/Vendor.Service';
 import { getDayOfWeek } from '../../utils/DateUtils'; // Import our safe date utility
+import RouteMapView from './RouteMapView';
 
 const RoutePreview = ({ navigation }) => {
   const { state } = useAppState();
@@ -15,7 +16,7 @@ const RoutePreview = ({ navigation }) => {
   const isLastVendor = state.journey.currentVendorIndex === state.journey.vendors.length - 1;
 
   const handleStartNavigation = () => {
-    navigation.navigate('MapView');
+    navigation.navigate('RouteMapView');
   };
 
   const handleSkipVendor = () => {
