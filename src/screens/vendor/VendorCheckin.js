@@ -343,67 +343,67 @@ const VendorCheckin = ({ route, navigation }) => {
       <View style={styles.scannerContainer}>
         
         
-      <Camera
-        style={styles.scanner}
-        onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
-        type={Camera.Constants ? Camera.Constants.Type.back : 0}
-        flashMode={torchOn 
-          ? (Camera.Constants ? Camera.Constants.FlashMode.torch : 1) 
-          : (Camera.Constants ? Camera.Constants.FlashMode.off : 0)}
-      >        
-        
-          <View style={styles.overlay}>
-            <View style={styles.unfilled} />
-            <View style={styles.row}>
-              <View style={styles.unfilled} />
-              <View style={styles.scanner} />
-              <View style={styles.unfilled} />
-            </View>
-            <View style={styles.unfilled} />
-          </View>
-          
-          <View style={styles.instructionsContainer}>
-            <Text style={styles.instructionsText}>
-              Scan the QR code at the dispensary to check in
-            </Text>
-          </View>
-          
-          {/* Torch toggle button */}
-          <TouchableOpacity 
-            style={styles.torchButton}
-            onPress={toggleTorch}
-          >
-            <Icon 
-              name={torchOn ? "flash-on" : "flash-off"} 
-              type="material" 
-              color="#FFFFFF" 
-              size={24} 
-            />
-          </TouchableOpacity>
-          
-          {scanned && !isLoading && (
-            <Button
-              title="Tap to Scan Again"
-              onPress={() => setScanned(false)}
-              buttonStyle={styles.scanAgainButton}
-              containerStyle={styles.scanAgainButtonContainer}
-            />
-          )}
-          
-          {isLoading && (
-            <View style={styles.loadingOverlay}>
-              <ActivityIndicator size="large" color="#FFFFFF" />
-              <Text style={styles.loadingText}>Processing...</Text>
-            </View>
-          )}
-          
-          <Button
-            title="Cancel"
-            onPress={handleCancel}
-            buttonStyle={styles.cancelButton}
-            containerStyle={styles.cancelButtonContainer}
-          />
-        </Camera>
+      {hasPermission && !scannedVendor && (
+  <View style={styles.scannerContainer}>
+    <Camera
+      style={styles.scanner}
+      onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+      type={1} // Use direct integer value instead of Constants
+      flashMode={torchOn ? 1 : 0} // Use direct integer values
+    >
+      <View style={styles.overlay}>
+        <View style={styles.unfilled} />
+        <View style={styles.row}>
+          <View style={styles.unfilled} />
+          <View style={styles.scanner} />
+          <View style={styles.unfilled} />
+        </View>
+        <View style={styles.unfilled} />
+      </View>
+      
+      <View style={styles.instructionsContainer}>
+        <Text style={styles.instructionsText}>
+          Scan the QR code at the dispensary to check in
+        </Text>
+      </View>
+      
+      <TouchableOpacity 
+        style={styles.torchButton}
+        onPress={toggleTorch}
+      >
+        <Icon 
+          name={torchOn ? "flash-on" : "flash-off"} 
+          type="material" 
+          color="#FFFFFF" 
+          size={24} 
+        />
+      </TouchableOpacity>
+      
+      {scanned && !isLoading && (
+        <Button
+          title="Tap to Scan Again"
+          onPress={() => setScanned(false)}
+          buttonStyle={styles.scanAgainButton}
+          containerStyle={styles.scanAgainButtonContainer}
+        />
+      )}
+      
+      {isLoading && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#FFFFFF" />
+          <Text style={styles.loadingText}>Processing...</Text>
+        </View>
+      )}
+      
+      <Button
+        title="Cancel"
+        onPress={handleCancel}
+        buttonStyle={styles.cancelButton}
+        containerStyle={styles.cancelButtonContainer}
+      />
+    </Camera>
+  </View>
+)}
       </View>
     </SafeAreaView>
   );
