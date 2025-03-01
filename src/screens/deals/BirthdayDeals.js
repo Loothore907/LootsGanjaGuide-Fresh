@@ -120,7 +120,8 @@ const BirthdayDeals = ({ navigation }) => {
           startLocation: {
             latitude: 61.217381,
             longitude: -149.863129
-          }
+          },
+          dealType: 'birthday'
         });
         
         // Start journey in app state

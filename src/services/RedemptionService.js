@@ -71,7 +71,7 @@ class RedemptionService {
       const redemptions = await this.getAllRedemptions();
       const today = new Date().toISOString().split('T')[0]; // Get YYYY-MM-DD
       
-      return redemptions.some(redemption => {
+      const hasRedeemedToday = redemptions.some(redemption => {
         // Check if redemption was today
         const redemptionDate = new Date(redemption.timestamp).toISOString().split('T')[0];
         
@@ -87,9 +87,20 @@ class RedemptionService {
                  redemptionDate === today;
         }
       });
+      
+      // For debugging, log what was found
+      Logger.debug(LogCategory.DEALS, `Checking redemption for ${vendorId} (${dealType})`, { 
+        hasRedeemedToday,
+        vendorId,
+        dealType,
+        dealId,
+        redemptionsCount: redemptions.length
+      });
+      
+      return hasRedeemedToday;
     } catch (error) {
       Logger.error(LogCategory.STORAGE, 'Error checking redemptions', { error });
-      return false;
+      return false; // Default to false in case of error
     }
   }
   

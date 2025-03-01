@@ -8,12 +8,14 @@ import {
   ActivityIndicator,
   Share,
   Platform,
-  TouchableOpacity
+  TouchableOpacity,
+  Modal
 } from 'react-native';
 import { 
   Text, 
   Button, 
-  Icon
+  Icon,
+  Card
 } from '@rneui/themed';
 import { Camera } from 'expo-camera';
 import * as Location from 'expo-location';
@@ -36,6 +38,9 @@ const VendorCheckin = ({ route, navigation }) => {
   const [scannedVendor, setScannedVendor] = useState(null);
   const [torchOn, setTorchOn] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [userLocation, setUserLocation] = useState(null);
+  const [distance, setDistance] = useState(null);
+  const [locationVerificationOpen, setLocationVerificationOpen] = useState(false);
   
   // Request camera permissions and check if direct vendor ID was provided
   useEffect(() => {
@@ -72,6 +77,40 @@ const VendorCheckin = ({ route, navigation }) => {
     };
   }, []);
   
+  // Add this function to get the user's current location
+  const getCurrentLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Logger.warn(LogCategory.PERMISSIONS, 'Location permission was denied');
+        setUserLocation(null);
+        return;
+      }
+      
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced
+      });
+      
+      setUserLocation(location.coords);
+      
+      // Calculate distance to vendor if vendor data is available
+      if (scannedVendor && scannedVendor.location?.coordinates) {
+        const vendorCoords = scannedVendor.location.coordinates;
+        const calculatedDistance = locationService.calculateDistance(
+          location.coords.latitude,
+          location.coords.longitude,
+          vendorCoords.latitude,
+          vendorCoords.longitude
+        );
+        
+        setDistance(calculatedDistance);
+      }
+    } catch (error) {
+      Logger.error(LogCategory.LOCATION, 'Error getting current location', { error });
+      setUserLocation(null);
+    }
+  };
+  
   const handleDirectCheckin = async (id) => {
     setIsLoading(true);
     try {
@@ -79,6 +118,9 @@ const VendorCheckin = ({ route, navigation }) => {
         // Get vendor information
         const vendor = await getVendorById(id);
         setScannedVendor(vendor);
+        
+        // Get current location after setting vendor
+        await getCurrentLocation();
         
         // Process check-in (will happen when user confirms)
         Logger.info(LogCategory.CHECKIN, 'Direct check-in initiated', { vendorId: id });
@@ -136,7 +178,42 @@ const VendorCheckin = ({ route, navigation }) => {
     }
   };
   
+  // Modify handleConfirmCheckin to check distance but not block users
   const handleConfirmCheckin = async () => {
+    if (!scannedVendor) return;
+    
+    // Check if we have location data and if the user is far from the vendor
+    if (distance !== null && distance > 0.1) {
+      // Show location verification modal instead of blocking
+      setLocationVerificationOpen(true);
+      return;
+    }
+    
+    // If distance is within range or we don't have location data, proceed with check-in
+    processCheckin();
+  };
+  
+  // Add a new function to force check-in when user confirms they're at the location
+  const handleForceCheckin = () => {
+    // Log the discrepancy
+    Logger.info(LogCategory.CHECKIN, 'User confirmed check-in despite location mismatch', {
+      vendorId: scannedVendor.id,
+      vendorName: scannedVendor.name,
+      userLocation: userLocation ? {
+        latitude: userLocation.latitude,
+        longitude: userLocation.longitude
+      } : null,
+      vendorLocation: scannedVendor.location?.coordinates,
+      calculatedDistance: distance
+    });
+    
+    // Close modal and process check-in
+    setLocationVerificationOpen(false);
+    processCheckin();
+  };
+  
+  // Rename the existing check-in logic to this function
+  const processCheckin = async () => {
     if (!scannedVendor) return;
     
     setIsLoading(true);
@@ -349,130 +426,35 @@ const VendorCheckin = ({ route, navigation }) => {
     }
   };
   
-  // Determine what check-in options to show based on vendor status
-  const renderCheckinOptions = () => {
-    // Determine if vendor has QR code capability
-    const hasQrOption = scannedVendor.hasQrCode === true;
-    
-    return (
-      <View style={styles.checkinOptionsContainer}>
-        {hasQrOption ? (
-          // Vendor has QR code option
-          <>
-            <Button
-              title="Scan QR Code"
-              icon={{
-                name: "qr-code-scanner",
-                type: "material",
-                size: 20,
-                color: "white"
-              }}
-              onPress={activateScanner}
-              buttonStyle={styles.scanQrButton}
-              containerStyle={styles.buttonContainer}
-            />
-            
-            <Button
-              title="Skip QR Code (Half Points)"
-              icon={{
-                name: "cannabis",
-                type: "material",
-                size: 20,
-                color: "#666"
-              }}
-              type="outline"
-              onPress={() => handleManualCheckin(true)}
-              buttonStyle={styles.skipQrButton}
-              containerStyle={styles.buttonContainer}
-            />
-            
-            {/* Humorous message about QR codes */}
-            <View style={styles.qrInfoContainer}>
-              <Icon name="emoji-emotions" type="material" color="#4CAF50" size={20} />
-              <Text style={styles.qrInfoText}>
-                We get it - sometimes QR codes can be a pain! But they help us collect valuable data 
-                so we can build a better app. Plus, all those sweet rewards in the Points Shop? They're 
-                much easier to earn with full QR points! 🌿
-              </Text>
-            </View>
-            
-            <View style={styles.infoBox}>
-              <Icon name="info" type="material" size={20} color="#4CAF50" />
-              <Text style={styles.infoText}>
-                We use QR codes to collect valuable data that helps us improve the app! 
-                Full points for QR scans, half points for skipping.
-              </Text>
-            </View>
-          </>
-        ) : (
-          // Vendor without QR code option
-          <Button
-            title="I'm Here"
-            icon={{
-              name: "place",
-              type: "material",
-              size: 20,
-              color: "white"
-            }}
-            onPress={() => handleManualCheckin(false)}
-            buttonStyle={styles.imHereButton}
-            containerStyle={styles.buttonContainer}
-          />
-        )}
-      </View>
-    );
-  };
-
-  // Activate the QR scanner
-  const activateScanner = () => {
-    setShowScanner(true);
-  };
-
-  // Handle manual check-in with parameter to indicate if it's a QR skip
+  // Modify handleManualCheckin to use the new location verification
   const handleManualCheckin = async (isQrSkip) => {
-    // Verify user is at the location using GPS
-    try {
-      const currentLocation = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High
-      });
-      
-      // Calculate distance to vendor
-      const vendorCoords = scannedVendor.location.coordinates;
-      const distance = locationService.calculateDistance(
-        currentLocation.coords.latitude,
-        currentLocation.coords.longitude,
-        vendorCoords.latitude,
-        vendorCoords.longitude
-      );
-      
-      // If close enough (within 100 meters), allow check-in
-      if (distance <= 0.062) { // ~100 meters in miles
-        // Determine points based on check-in type
-        let pointsValue = 10; // Default points for QR or non-QR vendor
-        let checkInType = 'manual';
-        
-        if (scannedVendor.hasQrCode && isQrSkip) {
-          pointsValue = 5; // Half points for skipping QR at a QR-enabled vendor
-          checkInType = 'qr_skipped';
-        }
-        
-        // Process the check-in
-        await processCheckin(pointsValue, checkInType);
-      } else {
-        // Too far away
-        Alert.alert(
-          'Too Far Away',
-          `You appear to be ${distance.toFixed(2)} miles from ${scannedVendor.name}. Please get closer to check in.`
-        );
-      }
-    } catch (error) {
-      Logger.error(LogCategory.LOCATION, 'Error getting location for manual check-in', { error });
-      Alert.alert('Error', 'Could not verify your location. Please try again.');
+    // Get location if we don't have it yet
+    if (!userLocation) {
+      await getCurrentLocation();
     }
+    
+    // If we have location and distance data, check if user is far from vendor
+    if (distance !== null && distance > 0.1) {
+      // Show location verification modal
+      setLocationVerificationOpen(true);
+      return;
+    }
+    
+    // Process the check-in with appropriate points
+    let pointsValue = 10; // Default points for QR or non-QR vendor
+    let checkInType = 'manual';
+    
+    if (scannedVendor.hasQrCode && isQrSkip) {
+      pointsValue = 5; // Half points for skipping QR at a QR-enabled vendor
+      checkInType = 'qr_skipped';
+    }
+    
+    // Process check-in
+    await processManualCheckin(pointsValue, checkInType);
   };
-
+  
   // Process check-in with points and type
-  const processCheckin = async (pointsValue, checkInType) => {
+  const processManualCheckin = async (pointsValue, checkInType) => {
     setIsLoading(true);
     try {
       // Process check-in
@@ -542,6 +524,85 @@ const VendorCheckin = ({ route, navigation }) => {
     } finally {
       setIsLoading(false);
     }
+  };
+  
+  // Determine what check-in options to show based on vendor status
+  const renderCheckinOptions = () => {
+    // Determine if vendor has QR code capability
+    const hasQrOption = scannedVendor.hasQrCode === true;
+    
+    return (
+      <View style={styles.checkinOptionsContainer}>
+        {hasQrOption ? (
+          // Vendor has QR code option
+          <>
+            <Button
+              title="Scan QR Code"
+              icon={{
+                name: "qr-code-scanner",
+                type: "material",
+                size: 20,
+                color: "white"
+              }}
+              onPress={activateScanner}
+              buttonStyle={styles.scanQrButton}
+              containerStyle={styles.buttonContainer}
+            />
+            
+            <Button
+              title="Skip QR Code (Half Points)"
+              icon={{
+                name: "eco",
+                type: "material",
+                size: 20,
+                color: "#666"
+              }}
+              type="outline"
+              onPress={() => handleManualCheckin(true)}
+              buttonStyle={styles.skipQrButton}
+              containerStyle={styles.buttonContainer}
+            />
+            
+            {/* Humorous message about QR codes */}
+            <View style={styles.qrInfoContainer}>
+              <Icon name="emoji-emotions" type="material" color="#4CAF50" size={20} />
+              <Text style={styles.qrInfoText}>
+                We get it - sometimes QR codes can be a pain! But they help us collect valuable data 
+                so we can build a better app. Plus, all those sweet rewards in the Points Shop? They're 
+                much easier to earn with full QR points! 🌿
+              </Text>
+            </View>
+            
+            <View style={styles.infoBox}>
+              <Icon name="info" type="material" size={20} color="#4CAF50" />
+              <Text style={styles.infoText}>
+                We use QR codes to collect valuable data that helps us improve the app! 
+                Full points for QR scans, half points for skipping.
+              </Text>
+            </View>
+          </>
+        ) : (
+          // Vendor without QR code option
+          <Button
+            title="I'm Here"
+            icon={{
+              name: "place",
+              type: "material",
+              size: 20,
+              color: "white"
+            }}
+            onPress={() => handleManualCheckin(false)}
+            buttonStyle={styles.imHereButton}
+            containerStyle={styles.buttonContainer}
+          />
+        )}
+      </View>
+    );
+  };
+
+  // Activate the QR scanner
+  const activateScanner = () => {
+    setShowScanner(true);
   };
   
   if (hasPermission === null && !vendorId) {
@@ -638,8 +699,50 @@ const VendorCheckin = ({ route, navigation }) => {
             <Text style={styles.confirmVendor}>{scannedVendor.name}</Text>
             <Text style={styles.confirmAddress}>{scannedVendor.location.address}</Text>
             
-            {/* Render check-in options based on vendor capabilities */}
-            {renderCheckinOptions()}
+            {/* Replace the check-in UI with this improved version */}
+            <View style={styles.buttonsContainer}>
+              {/* Option 1: Scan QR for full points */}
+              <Button
+                title="Check In with QR Code"
+                icon={{
+                  name: "qr-code-scanner",
+                  type: "material",
+                  size: 20,
+                  color: "white"
+                }}
+                onPress={() => setShowScanner(true)}
+                buttonStyle={styles.scanQrButton}
+                containerStyle={styles.buttonContainer}
+              />
+              
+              {/* Option 2: No QR option (half points if QR is available) */}
+              <Button
+                title={scannedVendor.hasQrCode ? 
+                  "Check In without QR (Half Points)" : 
+                  "Check In"}
+                icon={{
+                  name: "eco", // Changed from "cannabis" to "eco"
+                  type: "material",
+                  size: 20,
+                  color: scannedVendor.hasQrCode ? "#666" : "white"
+                }}
+                type={scannedVendor.hasQrCode ? "outline" : "solid"}
+                onPress={() => handleManualCheckin(scannedVendor.hasQrCode)}
+                buttonStyle={scannedVendor.hasQrCode ? styles.skipQrButton : styles.confirmButton}
+                containerStyle={styles.buttonContainer}
+                titleStyle={scannedVendor.hasQrCode ? { color: '#666' } : undefined}
+              />
+            </View>
+
+            {/* Optional message about QR codes if vendor has QR capability */}
+            {scannedVendor.hasQrCode && (
+              <View style={styles.qrInfoContainer}>
+                <Icon name="emoji-emotions" type="material" color="#4CAF50" size={20} />
+                <Text style={styles.qrInfoText}>
+                  Full points for scanning QR, half points for skipping it. QR scans help us improve the app experience for everyone!
+                </Text>
+              </View>
+            )}
             
             <Button
               title="Cancel"
@@ -647,6 +750,53 @@ const VendorCheckin = ({ route, navigation }) => {
               onPress={handleCancel}
               containerStyle={styles.buttonContainer}
             />
+            
+            {/* Location Verification Modal */}
+            <Modal
+              visible={locationVerificationOpen}
+              transparent={true}
+              animationType="fade"
+              onRequestClose={() => setLocationVerificationOpen(false)}
+            >
+              <View style={styles.modalOverlay}>
+                <Card containerStyle={styles.modalCard}>
+                  <Icon
+                    name="place"
+                    type="material"
+                    size={40}
+                    color="#F44336"
+                    containerStyle={styles.modalIcon}
+                  />
+                  
+                  <Card.Title style={styles.modalTitle}>Too Far Away</Card.Title>
+                  
+                  <Text style={styles.modalText}>
+                    You appear to be {distance?.toFixed(2) || "some distance"} miles from {scannedVendor.name}. 
+                    GPS can sometimes be inaccurate - are you sure you're at this location?
+                  </Text>
+                  
+                  <View style={styles.modalButtonsContainer}>
+                    <Button
+                      title="Let me try again"
+                      type="outline"
+                      onPress={() => {
+                        setLocationVerificationOpen(false);
+                        getCurrentLocation(); // Refresh the location
+                      }}
+                      containerStyle={styles.modalButtonContainer}
+                      buttonStyle={styles.modalCancelButton}
+                    />
+                    
+                    <Button
+                      title="Yes, I'm here!"
+                      onPress={handleForceCheckin}
+                      containerStyle={styles.modalButtonContainer}
+                      buttonStyle={styles.modalConfirmButton}
+                    />
+                  </View>
+                </Card>
+              </View>
+            </Modal>
           </View>
         )}
       </SafeAreaView>
@@ -748,8 +898,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#4CAF50',
   },
   buttonContainer: {
-    width: '80%',
-    marginTop: 20,
+    width: '100%', // Full width for each button
   },
   scannerContainer: {
     flex: 1,
@@ -916,7 +1065,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   skipQrButton: {
-    borderColor: '#9E9E9E',
+    borderColor: '#666',
     borderRadius: 8,
     paddingVertical: 12,
   },
@@ -926,11 +1075,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   qrInfoContainer: {
+    flexDirection: 'row',
     backgroundColor: '#F1F8E9',
     borderRadius: 8,
     padding: 12,
     marginTop: 16,
-    flexDirection: 'row',
+    width: '80%',
     alignItems: 'flex-start',
   },
   qrInfoText: {
@@ -939,6 +1089,123 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#4CAF50',
     lineHeight: 20,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCard: {
+    width: '85%',
+    borderRadius: 10,
+    padding: 20,
+    margin: 0,
+  },
+  modalIcon: {
+    alignSelf: 'center',
+    marginBottom: 10,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  modalText: {
+    textAlign: 'center',
+    marginBottom: 20,
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  modalButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  modalButtonContainer: {
+    width: '48%',
+  },
+  modalCancelButton: {
+    borderColor: '#999',
+  },
+  modalConfirmButton: {
+    backgroundColor: '#4CAF50',
+  },
+  buttonsContainer: {
+    width: '80%',
+    marginTop: 20,
+    marginBottom: 15,
+    gap: 15, // Adds space between buttons
+  },
+  scanQrButton: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  skipQrButton: {
+    borderColor: '#666',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  confirmButton: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  qrInfoContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F8E9',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 16,
+    width: '80%',
+    alignItems: 'flex-start',
+  },
+  qrInfoText: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#4CAF50',
+    lineHeight: 20,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCard: {
+    width: '85%',
+    borderRadius: 10,
+    padding: 20,
+    margin: 0,
+  },
+  modalIcon: {
+    alignSelf: 'center',
+    marginBottom: 10,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  modalText: {
+    textAlign: 'center',
+    marginBottom: 20,
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  modalButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  modalButtonContainer: {
+    width: '48%',
+  },
+  modalCancelButton: {
+    borderColor: '#999',
+  },
+  modalConfirmButton: {
+    backgroundColor: '#4CAF50',
   },
 });
 

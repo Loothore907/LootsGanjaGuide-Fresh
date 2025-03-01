@@ -1,6 +1,7 @@
 // src/services/MockDataService.js
 import { Logger, LogCategory } from './LoggingService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import redemptionService from './RedemptionService';
 
 /**
  * Mock vendor data
@@ -1080,9 +1081,29 @@ export const createOptimizedRoute = async (vendorIds, options = {}) => {
   try {
     Logger.info(LogCategory.NAVIGATION, 'Creating optimized route', { vendorIds, options });
     
+    // Filter out vendors with already redeemed deals for today
+    const filteredVendorIds = [];
+    const dealType = options.dealType || 'daily';
+    
+    for (const vendorId of vendorIds) {
+      const alreadyRedeemed = await redemptionService.hasRedeemedToday(
+        vendorId, 
+        dealType
+      );
+      
+      if (!alreadyRedeemed) {
+        filteredVendorIds.push(vendorId);
+      } else {
+        Logger.info(LogCategory.DEALS, `Excluding vendor ${vendorId} from route - already redeemed today`);
+      }
+    }
+    
+    // Use the filtered list
+    const vendorsToInclude = filteredVendorIds.length > 0 ? filteredVendorIds : vendorIds;
+    
     // Validate vendors exist
     const vendors = [];
-    for (const id of vendorIds) {
+    for (const id of vendorsToInclude) {
       const vendor = await getVendorById(id);
       vendors.push(vendor);
     }

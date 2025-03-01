@@ -43,6 +43,9 @@ const RouteMapView = ({ navigation }) => {
   // Get journey vendors from state
   const { vendors, currentVendorIndex } = state.journey;
   const currentVendor = vendors[currentVendorIndex];
+  
+  // Determine if this is the last vendor in the journey
+  const isLastVendor = state.journey.currentVendorIndex === state.journey.vendors.length - 1;
 
   // Set up location tracking and route
   useEffect(() => {
@@ -207,6 +210,57 @@ const RouteMapView = ({ navigation }) => {
       vendorId: vendor.id,
       fromJourney: true 
     });
+  };
+
+  // Add the handleSkipVendor function
+  const handleSkipVendor = async () => {
+    try {
+      // Skip the current vendor
+      await dispatch(AppActions.skipVendor());
+      
+      // Check if there are still vendors left in the journey
+      if (state.journey.vendors.length === 0 || 
+          state.journey.currentVendorIndex >= state.journey.vendors.length) {
+        // No vendors left, complete the journey
+        navigation.navigate('JourneyComplete', { 
+          terminationType: "success" 
+        });
+        
+        Logger.info(LogCategory.JOURNEY, 'Completed journey after skipping last vendor');
+      } else {
+        // There are more vendors, refresh the route view to show the next vendor
+        navigation.replace('RouteMapView');
+        
+        Logger.info(LogCategory.JOURNEY, 'Skipped to next vendor', {
+          skippedVendorName: currentVendor?.name,
+          remainingVendorCount: state.journey.vendors.length - state.journey.currentVendorIndex
+        });
+      }
+    } catch (error) {
+      Logger.error(LogCategory.JOURNEY, 'Error skipping vendor', { error });
+      Alert.alert('Error', 'Failed to skip this stop. Please try again.');
+    }
+  };
+
+  // Update the handleEndJourney function
+  const handleEndJourney = () => {
+    Alert.alert(
+      'End Journey',
+      'Are you sure you want to end this journey? This will terminate your current progress.',
+      [
+        { text: 'CANCEL', style: 'cancel' },
+        { 
+          text: 'END JOURNEY', 
+          style: 'destructive',
+          onPress: () => {
+            // Navigate to journey complete with early termination
+            navigation.navigate('JourneyComplete', { 
+              terminationType: "early" 
+            });
+          }
+        }
+      ]
+    );
   };
 
   // Render each vendor in the journey list
@@ -396,57 +450,32 @@ const RouteMapView = ({ navigation }) => {
           />
           
           <View style={styles.actionButtons}>
-            {currentVendorIndex < vendors.length - 1 ? (
-              // Not the last vendor, show "Continue to Next Stop"
+            {/* Show Skip button if we're not on the last vendor */}
+            {!isLastVendor && (
               <Button
-                title="Continue to Next Stop"
+                title={`Skip ${currentVendor?.name || 'Current Stop'}`}
                 icon={{
-                  name: "navigation",
+                  name: "skip-next",
                   type: "material",
                   size: 20,
                   color: "white"
                 }}
-                onPress={() => navigateToVendor(currentVendorIndex)}
+                onPress={handleSkipVendor}
                 buttonStyle={styles.continueButton}
-                containerStyle={styles.continueButtonContainer}
-              />
-            ) : (
-              // Last vendor, show "Complete Journey"
-              <Button
-                title="Complete Journey"
-                icon={{
-                  name: "check-circle",
-                  type: "material",
-                  size: 20,
-                  color: "white"
-                }}
-                onPress={() => {
-                  // Navigate to journey completion with success status
-                  navigation.navigate('JourneyComplete', { 
-                    terminationType: "success",
-                    journeyData: {
-                      journeyType: state.journey.dealType,
-                      vendors: vendors,
-                      currentVendorIndex: currentVendorIndex,
-                      totalVendors: vendors.length,
-                      totalDistance: state.route.totalDistance
-                    }
-                  });
-                }}
-                buttonStyle={[styles.continueButton, { backgroundColor: '#4CAF50' }]}
                 containerStyle={styles.continueButtonContainer}
               />
             )}
             
-            {/* Skip button - show for all vendors with appropriate text */}
+            {/* End Journey button is always visible */}
             <Button
-              title={currentVendorIndex < vendors.length - 1 ? 
-                `Skip ${vendors[currentVendorIndex]?.name || 'Vendor'}` : 
-                "End Journey"}
+              title="End Journey"
               type="outline"
-              onPress={endJourney}
+              onPress={handleEndJourney}
               buttonStyle={styles.endButton}
-              containerStyle={styles.endButtonContainer}
+              containerStyle={[
+                styles.endButtonContainer,
+                isLastVendor && styles.fullWidthButton
+              ]}
               titleStyle={styles.endButtonTitle}
             />
           </View>       
@@ -641,6 +670,9 @@ const styles = StyleSheet.create({
   },
   errorButtonContainer: {
     width: '80%',
+  },
+  fullWidthButton: {
+    width: '100%', // Full width when it's the only button
   },
 });
 
