@@ -51,6 +51,7 @@ export const DayOfWeek = {
    * @property {string} description - Description of the deal
    * @property {string} discount - Discount amount or description (e.g. "20% OFF", "BOGO")
    * @property {string[]} restrictions - Array of restriction strings
+   * @property {string} redemptionFrequency - How often the deal can be redeemed ("once_per_day", "once_per_visit", "once", etc.)
    */
   
   /**

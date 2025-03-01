@@ -1,6 +1,6 @@
 // src/screens/auth/TermsOfService.js
-import React, { useState, useRef } from 'react';
-import { View, StyleSheet, ScrollView, Alert, ActivityIndicator, Platform, BackHandler, Dimensions } from 'react-native';
+import React, { useState, useRef, useEffect } from 'react';
+import { View, StyleSheet, ScrollView, Alert, ActivityIndicator, Platform, BackHandler, Dimensions, TouchableOpacity } from 'react-native';
 import { Text, Button } from '@rneui/themed';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logger, LogCategory } from '../../services/LoggingService';
@@ -12,6 +12,25 @@ const TermsOfService = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [hasScrolledToBottom, setHasScrolledToBottom] = useState(false);
   const scrollViewRef = useRef(null);
+  
+  // Add a scrollPosition state to track scroll position
+  const [scrollPosition, setScrollPosition] = useState(0);
+  const [contentHeight, setContentHeight] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
+  
+  // Detect when scroll reaches the bottom
+  useEffect(() => {
+    // Check if we've scrolled far enough to be at the bottom
+    if (contentHeight > 0 && containerHeight > 0) {
+      // Need to account for some padding at the bottom
+      const isAtBottom = scrollPosition + containerHeight >= contentHeight - 20;
+      
+      if (isAtBottom && !hasScrolledToBottom) {
+        setHasScrolledToBottom(true);
+        Logger.debug(LogCategory.UI, 'User scrolled to bottom of Terms of Service');
+      }
+    }
+  }, [scrollPosition, contentHeight, containerHeight, hasScrolledToBottom]);
   
   const handleAccept = async () => {
     setIsLoading(true);
@@ -64,50 +83,23 @@ const TermsOfService = ({ navigation }) => {
     );
   };
 
-  // Improved scroll position detection function with debug logs
-  const handleScroll = ({ nativeEvent }) => {
-    const { layoutMeasurement, contentOffset, contentSize } = nativeEvent;
-    const paddingToBottom = 20;
-    const isAtBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - paddingToBottom;
-    
-    // Log scrolling info for debugging
-    console.log('Scroll position:', {
-      visibleHeight: layoutMeasurement.height,
-      scrollOffset: contentOffset.y,
-      contentHeight: contentSize.height,
-      isAtBottom: isAtBottom
+  // Handle scroll events
+  const handleScroll = (event) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    setScrollPosition(contentOffset.y);
+    setContentHeight(contentSize.height);
+    setContainerHeight(layoutMeasurement.height);
+  };
+  
+  // Logging function for debugging
+  const logScrollInfo = () => {
+    console.log('Scroll info:', {
+      position: scrollPosition,
+      contentHeight,
+      containerHeight,
+      isAtBottom: scrollPosition + containerHeight >= contentHeight - 20,
+      hasScrolledToBottom
     });
-    
-    if (isAtBottom && !hasScrolledToBottom) {
-      setHasScrolledToBottom(true);
-      // Log that user has reached the bottom
-      console.log('User scrolled to bottom of Terms of Service');
-      Logger.debug(LogCategory.UI, 'User scrolled to bottom of Terms of Service');
-    }
-  };
-
-  // Alternative method - enable the button after a delay
-  const enableAcceptAfterDelay = () => {
-    // After 8 seconds, assume the user has had time to read the terms
-    setTimeout(() => {
-      if (!hasScrolledToBottom) {
-        console.log('Enabling Accept button after timeout');
-        setHasScrolledToBottom(true);
-      }
-    }, 8000);
-  };
-
-  // Call the function when component mounts
-  React.useEffect(() => {
-    enableAcceptAfterDelay();
-  }, []);
-
-  // Force the button to enable when user clicks at the bottom manually
-  const handleContentPress = () => {
-    if (!hasScrolledToBottom) {
-      console.log('User tapped content, enabling Accept button');
-      setHasScrolledToBottom(true);
-    }
   };
 
   return (
@@ -119,7 +111,9 @@ const TermsOfService = ({ navigation }) => {
         style={styles.scrollView}
         contentContainerStyle={styles.scrollViewContent}
         onScroll={handleScroll}
-        scrollEventThrottle={100} // More frequent check
+        scrollEventThrottle={16} // More frequent updates
+        onContentSizeChange={(width, height) => setContentHeight(height)}
+        onLayout={(event) => setContainerHeight(event.nativeEvent.layout.height)}
       >
         <Text style={styles.sectionHeader}>Terms of Service</Text>
         <Text style={styles.paragraph}>
@@ -189,14 +183,9 @@ const TermsOfService = ({ navigation }) => {
           If you have any questions about our Terms of Service or Privacy Policy, please contact us.
         </Text>
         
-        {/* Clickable end indicator that enables the button */}
-        <View 
-          style={styles.scrollEndIndicator} 
-          onTouchEnd={handleContentPress}
-        >
-          <Text style={styles.scrollEndText}>
-            End of Terms - Tap here to enable Accept button
-          </Text>
+        {/* Simple end marker - no interactive elements */}
+        <View style={styles.endOfTerms}>
+          <Text style={styles.endOfTermsText}>End of Terms</Text>
         </View>
       </ScrollView>
       
@@ -219,8 +208,18 @@ const TermsOfService = ({ navigation }) => {
       
       {!hasScrolledToBottom && (
         <Text style={styles.scrollHint}>
-          Please scroll down and review the entire document
+          Please scroll down to review the entire document
         </Text>
+      )}
+      
+      {/* Debug button - remove in production */}
+      {__DEV__ && (
+        <TouchableOpacity 
+          style={styles.debugButton} 
+          onPress={logScrollInfo}
+        >
+          <Text style={styles.debugButtonText}>Debug Scroll</Text>
+        </TouchableOpacity>
       )}
     </View>
   );
@@ -277,20 +276,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 10,
   },
-  scrollEndIndicator: {
+  endOfTerms: {
     alignItems: 'center',
     paddingVertical: 15,
     marginTop: 15,
     borderTopWidth: 1,
     borderTopColor: '#e0e0e0',
-    backgroundColor: '#f0f0f0',
-    padding: 15,
-    borderRadius: 8,
   },
-  scrollEndText: {
+  endOfTermsText: {
     color: '#4CAF50',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  // Debug styles - remove in production
+  debugButton: {
+    position: 'absolute',
+    bottom: 5,
+    right: 5,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    padding: 5,
+    borderRadius: 5,
+  },
+  debugButtonText: {
+    color: 'white',
+    fontSize: 10,
   }
 });
 

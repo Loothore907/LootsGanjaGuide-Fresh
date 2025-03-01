@@ -37,7 +37,8 @@ const MOCK_VENDORS = [
       birthday: {
         description: '25% off entire purchase',
         discount: '25% OFF',
-        restrictions: ['ID required', 'Must be within birthday month', 'Cannot combine with other offers']
+        restrictions: ['ID required', 'Must be within birthday month', 'Cannot combine with other offers'],
+        redemptionFrequency: 'once_per_day'
       },
       daily: {
         monday: [{
@@ -109,6 +110,14 @@ const MOCK_VENDORS = [
           startDate: '2023-09-15T00:00:00Z',
           endDate: '2023-09-30T23:59:59Z',
           restrictions: ['In-store only', 'While supplies last']
+        },
+        {
+          title: '4/20 Celebration',
+          description: 'Our biggest sale of the year for the cannabis holiday',
+          discount: '42% OFF',
+          startDate: '2023-04-20T00:00:00Z',
+          endDate: '2023-04-20T23:59:59Z',
+          restrictions: ['One day only', 'While supplies last', 'Limit 1 oz per customer']
         }
       ]
     },
@@ -117,7 +126,8 @@ const MOCK_VENDORS = [
     lastUpdated: '2023-01-22T10:30:00Z',
     logoUrl: 'https://example.com/logos/denali.png',
     bannerUrl: 'https://example.com/banners/denali.png',
-    distance: 1.8
+    distance: 1.8,
+    hasQrCode: true
   },
   {
     id: 'v5',
@@ -150,7 +160,8 @@ const MOCK_VENDORS = [
       birthday: {
         description: '20% off entire purchase',
         discount: '20% OFF',
-        restrictions: ['ID required', 'Must be within birthday month', 'Cannot combine with other offers']
+        restrictions: ['ID required', 'Must be within birthday month', 'Cannot combine with other offers'],
+        redemptionFrequency: 'once_per_day'
       },
       daily: {
         monday: [{
@@ -197,6 +208,14 @@ const MOCK_VENDORS = [
           startDate: '2023-11-01T00:00:00Z',
           endDate: '2023-11-07T23:59:59Z',
           restrictions: ['In-store only', 'While supplies last']
+        },
+        {
+          title: '4/20 Frost Fest',
+          description: 'Special 4/20 deals on all your favorite products',
+          discount: '30% OFF',
+          startDate: '2023-04-20T00:00:00Z',
+          endDate: '2023-04-20T23:59:59Z',
+          restrictions: ['One day only', 'In-store only', 'While supplies last']
         }
       ]
     },
@@ -205,7 +224,8 @@ const MOCK_VENDORS = [
     lastUpdated: '2023-01-23T14:15:00Z',
     logoUrl: 'https://example.com/logos/arcticbuds.png',
     bannerUrl: 'https://example.com/banners/arcticbuds.png',
-    distance: 4.1
+    distance: 4.1,
+    hasQrCode: false
   },
   {
     id: 'v2',
@@ -238,7 +258,8 @@ const MOCK_VENDORS = [
       birthday: {
         description: 'Free pre-roll with purchase',
         discount: 'FREE PRE-ROLL',
-        restrictions: ['ID required', 'Must be within birthday month', 'One per customer']
+        restrictions: ['ID required', 'Must be within birthday month', 'One per customer'],
+        redemptionFrequency: 'once_per_day'
       },
       daily: {
         monday: [{
@@ -285,6 +306,14 @@ const MOCK_VENDORS = [
           startDate: '2023-03-01T00:00:00Z',
           endDate: '2023-03-07T23:59:59Z',
           restrictions: ['Check daily for new deals']
+        },
+        {
+          title: '4/20 Extravaganza',
+          description: 'Celebrate 4/20 with buy-one-get-one deals all day',
+          discount: 'BOGO FREE',
+          startDate: '2023-04-20T00:00:00Z',
+          endDate: '2023-04-20T23:59:59Z',
+          restrictions: ['Equal or lesser value', 'In-store only', 'While supplies last']
         }
       ]
     },
@@ -293,7 +322,8 @@ const MOCK_VENDORS = [
     lastUpdated: '2023-01-20T16:45:00Z',
     logoUrl: 'https://example.com/logos/aurora.png',
     bannerUrl: 'https://example.com/banners/aurora.png',
-    distance: 2.3
+    distance: 2.3,
+    hasQrCode: false
   },
   {
     id: 'v3',
@@ -326,7 +356,8 @@ const MOCK_VENDORS = [
       birthday: {
         description: '30% off one item of choice',
         discount: '30% OFF',
-        restrictions: ['ID required', 'Must be within birthday week', 'Excludes already discounted items']
+        restrictions: ['ID required', 'Must be within birthday week', 'Excludes already discounted items'],
+        redemptionFrequency: 'once_per_day'
       },
       daily: {
         monday: [{
@@ -373,6 +404,14 @@ const MOCK_VENDORS = [
           startDate: '2023-06-20T00:00:00Z',
           endDate: '2023-06-22T23:59:59Z',
           restrictions: ['In-store only', 'While supplies last']
+        },
+        {
+          title: '4/20 Northern Lights Special',
+          description: 'Our biggest discounts of the year for 4/20',
+          discount: '40% OFF',
+          startDate: '2023-04-20T00:00:00Z',
+          endDate: '2023-04-20T23:59:59Z',
+          restrictions: ['One day only', 'In-store only', 'Cannot combine with other offers']
         }
       ]
     },
@@ -381,7 +420,8 @@ const MOCK_VENDORS = [
     lastUpdated: '2023-01-18T12:15:00Z',
     logoUrl: 'https://example.com/logos/northernlights.png',
     bannerUrl: 'https://example.com/banners/northernlights.png',
-    distance: 3.5
+    distance: 3.5,
+    hasQrCode: true
   },
   {
     id: 'v4',
@@ -414,7 +454,8 @@ const MOCK_VENDORS = [
       birthday: {
         description: 'Buy one get one free on any product',
         discount: 'BOGO FREE',
-        restrictions: ['ID required', 'Must be on actual birthday', 'Equal or lesser value']
+        restrictions: ['ID required', 'Must be on actual birthday', 'Equal or lesser value'],
+        redemptionFrequency: 'once'
       },
       daily: {
         monday: [{
@@ -461,6 +502,14 @@ const MOCK_VENDORS = [
           startDate: '2023-04-20T00:00:00Z',
           endDate: '2023-04-20T23:59:59Z',
           restrictions: ['In-store only', 'While supplies last']
+        },
+        {
+          title: '4/20 Mountain High Event',
+          description: 'Join us for our annual 4/20 celebration with exclusive deals',
+          discount: '35% OFF',
+          startDate: '2023-04-20T00:00:00Z',
+          endDate: '2023-04-20T23:59:59Z',
+          restrictions: ['One day only', 'In-store purchases only', 'Limit 1 oz per customer']
         }
       ]
     },
@@ -469,7 +518,8 @@ const MOCK_VENDORS = [
     lastUpdated: '2023-01-15T14:30:00Z',
     logoUrl: 'https://example.com/logos/greenhorizon.png',
     bannerUrl: 'https://example.com/banners/greenhorizon.png',
-    distance: 1.2
+    distance: 1.2,
+    hasQrCode: true
   }
 ];
 
@@ -536,6 +586,30 @@ const MOCK_FEATURED_DEALS = [
     category: 'edibles',
     imageUrl: 'https://example.com/deals/2-for-tuesday.jpg',
     expiresAt: '2023-01-31T23:59:59Z'
+  },
+  {
+    id: 'd6',
+    title: '4/20 Cannabis Holiday',
+    description: '42% off storewide for the biggest cannabis holiday',
+    discount: '42% OFF',
+    vendorId: 'v1',
+    vendorName: 'Green Horizon',
+    dealType: 'special',
+    category: 'all',
+    imageUrl: 'https://example.com/deals/420-sale.jpg',
+    expiresAt: '2023-04-20T23:59:59Z'
+  },
+  {
+    id: 'd7',
+    title: 'Buy One Get One Free',
+    description: 'Buy any item, get one free on 4/20',
+    discount: 'BOGO FREE',
+    vendorId: 'v2',
+    vendorName: 'Aurora Dispensary',
+    dealType: 'special',
+    category: 'all',
+    imageUrl: 'https://example.com/deals/bogo-free.jpg',
+    expiresAt: '2023-04-20T23:59:59Z'
   }
 ];
 
@@ -1042,12 +1116,18 @@ export const createOptimizedRoute = async (vendorIds, options = {}) => {
     // Sort by distance from start
     vendorsWithDistance.sort((a, b) => a.distanceFromStart - b.distanceFromStart);
     
+    // Add checkedIn: false to each vendor
+    const vendorsWithCheckInStatus = vendorsWithDistance.map(vendor => ({
+      ...vendor,
+      checkedIn: false  // Initialize all vendors as not checked in
+    }));
+    
     // Calculate total distance
     let totalDistance = 0;
     let prevLat = startLat;
     let prevLng = startLng;
     
-    for (const vendor of vendorsWithDistance) {
+    for (const vendor of vendorsWithCheckInStatus) {
       const distance = calculateDistance(
         prevLat,
         prevLng,
@@ -1065,7 +1145,7 @@ export const createOptimizedRoute = async (vendorIds, options = {}) => {
     
     // Create route object
     const route = {
-      vendors: vendorsWithDistance,
+      vendors: vendorsWithCheckInStatus,
       totalDistance: totalDistance,
       estimatedTime: estimatedTime,
       startLocation: {

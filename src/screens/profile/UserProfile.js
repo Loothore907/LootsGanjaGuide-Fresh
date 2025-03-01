@@ -6,7 +6,8 @@ import {
   ScrollView, 
   TouchableOpacity, 
   Image,
-  Alert
+  Alert,
+  ActivityIndicator
 } from 'react-native';
 import { 
   Text, 
@@ -22,15 +23,26 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import redemptionService from '../../services/RedemptionService';
 
 const UserProfile = ({ navigation }) => {
   const { state, dispatch } = useAppState();
   const [isLoading, setIsLoading] = useState(false);
+  const [metrics, setMetrics] = useState(null);
   
   const username = state.user.username || 'Cannasseur';
   const points = state.user.points || 0;
   const favorites = state.user.favorites || [];
   const recentVisits = state.user.recentVisits || [];
+  
+  useEffect(() => {
+    const loadMetrics = async () => {
+      const stats = await redemptionService.getRedemptionStats();
+      setMetrics(stats);
+    };
+    
+    loadMetrics();
+  }, []);
   
   const menuItems = [
     {
@@ -135,6 +147,49 @@ const UserProfile = ({ navigation }) => {
               <Text style={styles.statLabel}>Journeys</Text>
             </View>
           </View>
+        </Card>
+        
+        <Card containerStyle={styles.metricsCard}>
+          <Card.Title>Activity Summary</Card.Title>
+          <Card.Divider />
+          
+          {metrics ? (
+            <View style={styles.metricsGrid}>
+              <View style={styles.metricSection}>
+                <Text style={styles.metricTitle}>Today</Text>
+                <Text style={styles.metricValue}>{metrics.today.count}</Text>
+                <Text style={styles.metricLabel}>Deals</Text>
+                <Text style={styles.metricValue}>{metrics.today.uniqueVendors}</Text>
+                <Text style={styles.metricLabel}>Vendors</Text>
+              </View>
+              
+              <View style={styles.metricSection}>
+                <Text style={styles.metricTitle}>This Week</Text>
+                <Text style={styles.metricValue}>{metrics.week.count}</Text>
+                <Text style={styles.metricLabel}>Deals</Text>
+                <Text style={styles.metricValue}>{metrics.week.uniqueVendors}</Text>
+                <Text style={styles.metricLabel}>Vendors</Text>
+              </View>
+              
+              <View style={styles.metricSection}>
+                <Text style={styles.metricTitle}>This Month</Text>
+                <Text style={styles.metricValue}>{metrics.month.count}</Text>
+                <Text style={styles.metricLabel}>Deals</Text>
+                <Text style={styles.metricValue}>{metrics.month.uniqueVendors}</Text>
+                <Text style={styles.metricLabel}>Vendors</Text>
+              </View>
+              
+              <View style={styles.metricSection}>
+                <Text style={styles.metricTitle}>Lifetime</Text>
+                <Text style={styles.metricValue}>{metrics.total.count}</Text>
+                <Text style={styles.metricLabel}>Deals</Text>
+                <Text style={styles.metricValue}>{metrics.total.uniqueVendors}</Text>
+                <Text style={styles.metricLabel}>Vendors</Text>
+              </View>
+            </View>
+          ) : (
+            <ActivityIndicator size="small" color="#4CAF50" />
+          )}
         </Card>
         
         <Card containerStyle={styles.menuCard}>
@@ -262,6 +317,40 @@ const styles = StyleSheet.create({
     height: '80%',
     backgroundColor: '#EEEEEE',
     alignSelf: 'center',
+  },
+  metricsCard: {
+    borderRadius: 8,
+    marginHorizontal: 16,
+    marginTop: 16,
+  },
+  metricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  metricSection: {
+    width: '48%',
+    marginBottom: 16,
+    padding: 10,
+    backgroundColor: '#F9FFF9',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  metricTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    color: '#333333',
+  },
+  metricValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+  },
+  metricLabel: {
+    fontSize: 12,
+    color: '#666666',
+    marginBottom: 8,
   },
   menuCard: {
     borderRadius: 8,

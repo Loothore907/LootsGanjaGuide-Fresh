@@ -180,14 +180,20 @@ const RouteMapView = ({ navigation }) => {
   const endJourney = () => {
     Alert.alert(
       'End Journey',
-      'Are you sure you want to end this journey? Your progress will be saved.',
+      'Are you sure you want to end this journey? This will terminate your current progress.',
       [
         { text: 'Cancel', style: 'cancel' },
         { 
           text: 'End Journey', 
           style: 'destructive',
           onPress: () => {
-            navigation.navigate('JourneyComplete');
+            // Check if journey is "complete" - all vendors have been checked in
+            const allVendorsCheckedIn = vendors.every(vendor => vendor.checkedIn);
+            
+            // Navigate to journey complete with the appropriate termination type
+            navigation.navigate('JourneyComplete', { 
+              terminationType: allVendorsCheckedIn ? "success" : "early" 
+            });
           }
         }
       ]
@@ -390,28 +396,60 @@ const RouteMapView = ({ navigation }) => {
           />
           
           <View style={styles.actionButtons}>
-            <Button
-              title="Continue to Next Stop"
-              icon={{
-                name: "navigation",
-                type: "material",
-                size: 20,
-                color: "white"
-              }}
-              onPress={() => navigateToVendor(currentVendorIndex)}
-              buttonStyle={styles.continueButton}
-              containerStyle={styles.continueButtonContainer}
-            />
+            {currentVendorIndex < vendors.length - 1 ? (
+              // Not the last vendor, show "Continue to Next Stop"
+              <Button
+                title="Continue to Next Stop"
+                icon={{
+                  name: "navigation",
+                  type: "material",
+                  size: 20,
+                  color: "white"
+                }}
+                onPress={() => navigateToVendor(currentVendorIndex)}
+                buttonStyle={styles.continueButton}
+                containerStyle={styles.continueButtonContainer}
+              />
+            ) : (
+              // Last vendor, show "Complete Journey"
+              <Button
+                title="Complete Journey"
+                icon={{
+                  name: "check-circle",
+                  type: "material",
+                  size: 20,
+                  color: "white"
+                }}
+                onPress={() => {
+                  // Navigate to journey completion with success status
+                  navigation.navigate('JourneyComplete', { 
+                    terminationType: "success",
+                    journeyData: {
+                      journeyType: state.journey.dealType,
+                      vendors: vendors,
+                      currentVendorIndex: currentVendorIndex,
+                      totalVendors: vendors.length,
+                      totalDistance: state.route.totalDistance
+                    }
+                  });
+                }}
+                buttonStyle={[styles.continueButton, { backgroundColor: '#4CAF50' }]}
+                containerStyle={styles.continueButtonContainer}
+              />
+            )}
             
+            {/* Skip button - show for all vendors with appropriate text */}
             <Button
-              title="End Journey"
+              title={currentVendorIndex < vendors.length - 1 ? 
+                `Skip ${vendors[currentVendorIndex]?.name || 'Vendor'}` : 
+                "End Journey"}
               type="outline"
               onPress={endJourney}
               buttonStyle={styles.endButton}
               containerStyle={styles.endButtonContainer}
               titleStyle={styles.endButtonTitle}
             />
-          </View>
+          </View>       
         </View>
       </View>
     </SafeAreaView>

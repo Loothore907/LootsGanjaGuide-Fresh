@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
 import { getBirthdayDeals, createOptimizedRoute } from '../../services/MockDataService';
+import redemptionService from '../../services/RedemptionService';
 
 const BirthdayDeals = ({ navigation }) => {
   const { state, dispatch } = useAppState();
@@ -45,11 +46,28 @@ const BirthdayDeals = ({ navigation }) => {
           activeOnly: true
         };
         
-        const birthdayDeals = await getBirthdayDeals(options);
-        setDeals(birthdayDeals);
+        // Get all birthday deals
+        let birthdayDeals = await getBirthdayDeals(options);
+        
+        // Filter out deals already redeemed today
+        const filteredDeals = [];
+        
+        for (const deal of birthdayDeals) {
+          const alreadyRedeemed = await redemptionService.hasRedeemedToday(
+            deal.vendorId, 
+            'birthday'
+          );
+          
+          if (!alreadyRedeemed) {
+            filteredDeals.push(deal);
+          }
+        }
+        
+        setDeals(filteredDeals);
         
         Logger.info(LogCategory.DEALS, 'Loaded birthday deals', {
-          count: birthdayDeals.length,
+          count: filteredDeals.length,
+          filtered: birthdayDeals.length - filteredDeals.length,
           maxDistance
         });
       }, LogCategory.DEALS, 'loading birthday deals', true);

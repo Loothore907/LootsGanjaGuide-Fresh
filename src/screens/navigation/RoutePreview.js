@@ -1,22 +1,55 @@
 // src/screens/navigation/RoutePreview.js
 import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView } from 'react-native';
+import { View, StyleSheet, ScrollView, Alert } from 'react-native';
 import { Text, Button, Card, Icon, Divider } from '@rneui/themed';
-import { useAppState } from '../../context/AppStateContext';
+import { useAppState, AppActions } from '../../context/AppStateContext';
 import { vendorService } from '../../services/Vendor.Service';
 import { getDayOfWeek } from '../../utils/DateUtils'; // Import our safe date utility
 import RouteMapView from './RouteMapView';
 
 const RoutePreview = ({ navigation }) => {
-  const { state } = useAppState();
+  const { state, dispatch } = useAppState();
   const [isLoading, setIsLoading] = useState(false);
 
-  // Get current vendor from journey state
-  const currentVendor = state.journey.vendors[state.journey.currentVendorIndex];
-  const isLastVendor = state.journey.currentVendorIndex === state.journey.vendors.length - 1;
+  // Add null checks before accessing currentVendor
+  const currentVendor = state.journey && state.journey.vendors && state.journey.currentVendorIndex >= 0 
+    ? state.journey.vendors[state.journey.currentVendorIndex] 
+    : null;
+    
+  const isLastVendor = state.journey && state.journey.vendors && 
+    state.journey.currentVendorIndex === state.journey.vendors.length - 1;
 
   const handleStartNavigation = () => {
     navigation.navigate('RouteMapView');
+  };
+
+  const handleEndJourney = () => {
+    // Check if journey has started by looking at the checkedIn status
+    const hasStarted = state.journey.vendors.some(vendor => vendor.checkedIn);
+    
+    if (!hasStarted) {
+      // Journey hasn't started, show message and return to dashboard
+      Alert.alert(
+        'Journey Not Started',
+        'You haven\'t started your journey yet. Would you like to return to the dashboard?',
+        [
+          { text: 'No, Stay Here', style: 'cancel' },
+          { 
+            text: 'Yes, Go Back', 
+            onPress: () => {
+              dispatch(AppActions.endJourney());
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'MainTabs' }],
+              });
+            }
+          }
+        ]
+      );
+    } else {
+      // Journey has started, go to the termination confirmation screen
+      navigation.navigate('JourneyComplete', { terminationType: "early" });
+    }
   };
 
   const handleSkipVendor = () => {
@@ -26,11 +59,7 @@ const RoutePreview = ({ navigation }) => {
   };
 
   const handleShowDetails = () => {
-    navigation.navigate('VendorDetails', { vendorId: currentVendor.id });
-  };
-
-  const handleEndJourney = () => {
-    navigation.navigate('JourneyComplete');
+    navigation.navigate('VendorProfile', { vendorId: currentVendor.id });
   };
 
   const formatDistance = (distance) => {
@@ -46,83 +75,103 @@ const RoutePreview = ({ navigation }) => {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content}>
-        <Text h4 style={styles.title}>
-          {state.journey.currentVendorIndex === 0 ? 'Starting Your Journey' : 'Next Stop'}
-        </Text>
-
-        <Card containerStyle={styles.vendorCard}>
-          <Card.Title>{currentVendor.name}</Card.Title>
-          <Card.Divider />
-
-          <View style={styles.locationInfo}>
-            <Icon
-              name="location-pin"
-              type="material"
-              color="#2089dc"
-              size={24}
-            />
-            <Text style={styles.distance}>
-              {formatDistance(currentVendor.distance)}
+        {!currentVendor ? (
+          // Display an error message when vendor data is not available
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>
+              Sorry, we couldn't load the journey data. The information may be outdated or incomplete.
             </Text>
+            <Button
+              title="Return to Home"
+              onPress={() => navigation.reset({
+                index: 0,
+                routes: [{ name: 'MainTabs' }],
+              })}
+              containerStyle={styles.errorButtonContainer}
+            />
           </View>
+        ) : (
+          // Rest of the component with currentVendor data
+          <>
+            <Text h4 style={styles.title}>
+              {state.journey.currentVendorIndex === 0 ? 'Starting Your Journey' : 'Next Stop'}
+            </Text>
 
-          <Text style={styles.address}>
-            {currentVendor.location.address}
-          </Text>
+            <Card containerStyle={styles.vendorCard}>
+              <Card.Title>{currentVendor.name}</Card.Title>
+              <Card.Divider />
 
-          <Divider style={styles.divider} />
-
-          <Text style={styles.dealsHeader}>Today's Deals:</Text>
-          {getTodaysDeals(currentVendor).map((deal, index) => (
-            <View key={index} style={styles.dealItem}>
-              <Text style={styles.dealTitle}>{deal.description}</Text>
-              <Text style={styles.discount}>{deal.discount}</Text>
-              {deal.restrictions.map((restriction, idx) => (
-                <Text key={idx} style={styles.restriction}>
-                  • {restriction}
+              <View style={styles.locationInfo}>
+                <Icon
+                  name="location-pin"
+                  type="material"
+                  color="#2089dc"
+                  size={24}
+                />
+                <Text style={styles.distance}>
+                  {formatDistance(currentVendor.distance)}
                 </Text>
+              </View>
+
+              <Text style={styles.address}>
+                {currentVendor.location.address}
+              </Text>
+
+              <Divider style={styles.divider} />
+
+              <Text style={styles.dealsHeader}>Today's Deals:</Text>
+              {getTodaysDeals(currentVendor).map((deal, index) => (
+                <View key={index} style={styles.dealItem}>
+                  <Text style={styles.dealTitle}>{deal.description}</Text>
+                  <Text style={styles.discount}>{deal.discount}</Text>
+                  {deal.restrictions.map((restriction, idx) => (
+                    <Text key={idx} style={styles.restriction}>
+                      • {restriction}
+                    </Text>
+                  ))}
+                </View>
               ))}
+
+              <Button
+                title="Show All Deals"
+                type="outline"
+                onPress={handleShowDetails}
+                containerStyle={styles.detailsButton}
+              />
+            </Card>
+
+            <View style={styles.actionButtons}>
+              <Button
+                title={isLastVendor ? "End Journey" : "Skip This Stop"}
+                type="outline"
+                onPress={isLastVendor ? handleEndJourney : handleSkipVendor}
+                containerStyle={styles.actionButton}
+              />
+              
+              <Button
+                title="Let's Go!"
+                icon={{
+                  name: "navigation",
+                  type: "material",
+                  size: 20,
+                  color: "white"
+                }}
+                onPress={handleStartNavigation}
+                containerStyle={styles.actionButton}
+                loading={isLoading}
+              />
             </View>
-          ))}
 
-          <Button
-            title="Show All Deals"
-            type="outline"
-            onPress={handleShowDetails}
-            containerStyle={styles.detailsButton}
-          />
-        </Card>
-
-        <View style={styles.actionButtons}>
-          <Button
-            title={isLastVendor ? "End Journey" : "Skip This Stop"}
-            type="outline"
-            onPress={isLastVendor ? handleEndJourney : handleSkipVendor}
-            containerStyle={styles.actionButton}
-          />
-          
-          <Button
-            title="Let's Go!"
-            icon={{
-              name: "navigation",
-              type: "material",
-              size: 20,
-              color: "white"
-            }}
-            onPress={handleStartNavigation}
-            containerStyle={styles.actionButton}
-            loading={isLoading}
-          />
-        </View>
-
-        <View style={styles.progressInfo}>
-          <Text style={styles.progressText}>
-            Stop {state.journey.currentVendorIndex + 1} of {state.journey.totalVendors}
-          </Text>
-          <Text style={styles.estimateText}>
-            Estimated time to destination: {Math.round(currentVendor.distance * 3)} mins
-          </Text>
-        </View>
+            <View style={styles.progressInfo}>
+              <Text style={styles.progressText}>
+                Stop {state.journey.currentVendorIndex + 1} of {state.journey.totalVendors}
+              </Text>
+              <Text style={styles.estimateText}>
+                Estimated time to destination: {Math.round(currentVendor.distance * 3)} mins
+              </Text>
+            </View>
+          </>
+        )}
       </View>
     </ScrollView>
   );
@@ -208,6 +257,21 @@ const styles = StyleSheet.create({
   estimateText: {
     textAlign: 'center',
     color: '#666',
+  },
+  errorContainer: {
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errorText: {
+    fontSize: 16,
+    textAlign: 'center',
+    color: '#666',
+    marginBottom: 20,
+  },
+  errorButtonContainer: {
+    width: '100%',
+    marginTop: 10,
   },
 });
 

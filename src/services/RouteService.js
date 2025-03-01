@@ -33,7 +33,22 @@ class RouteService {
         // Try to load current journey from storage
         const storedJourney = await AsyncStorage.getItem('current_journey');
         if (storedJourney) {
-          this.currentJourney = JSON.parse(storedJourney);
+          const parsedJourney = JSON.parse(storedJourney);
+          
+          // Check for journey expiration - 24 hours
+          const journeyDate = new Date(parsedJourney.createdAt);
+          const now = new Date();
+          const journeyAge = now - journeyDate;
+          const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+          
+          if (journeyAge > ONE_DAY) {
+            // Journey is too old, clear it
+            Logger.info(LogCategory.JOURNEY, 'Clearing expired journey data');
+            await this.clearCurrentJourney();
+            return;
+          }
+          
+          this.currentJourney = parsedJourney;
           
           // Also load route data if available
           const storedRouteData = await AsyncStorage.getItem('current_route_data');
@@ -332,7 +347,7 @@ class RouteService {
     // Store in journey history
     await this.addToJourneyHistory(summary);
     
-    // Clear current journey
+    // Clear current journey - Ensure this is called
     await this.clearCurrentJourney();
     
     Logger.info(LogCategory.JOURNEY, 'Journey completed', {

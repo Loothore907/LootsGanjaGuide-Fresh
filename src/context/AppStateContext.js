@@ -59,7 +59,9 @@ const ActionTypes = {
   UPDATE_VENDOR_DATA: 'UPDATE_VENDOR_DATA',
   UPDATE_DEAL_FILTERS: 'UPDATE_DEAL_FILTERS',
   SET_THEME: 'SET_THEME',
-  SET_NOTIFICATIONS: 'SET_NOTIFICATIONS'
+  SET_NOTIFICATIONS: 'SET_NOTIFICATIONS',
+  MARK_VENDOR_CHECKED_IN: 'MARK_VENDOR_CHECKED_IN',
+  SET_CURRENT_VENDOR_INDEX: 'SET_CURRENT_VENDOR_INDEX'
 };
 
 // Reducer
@@ -83,8 +85,7 @@ function appReducer(state, action) {
         }
       };
 
-          // In your reducer function
-    case 'SET_CURRENT_VENDOR_INDEX':
+    case ActionTypes.SET_CURRENT_VENDOR_INDEX:
       return {
         ...state,
         journey: {
@@ -241,6 +242,23 @@ function appReducer(state, action) {
         }
       };
 
+    case ActionTypes.MARK_VENDOR_CHECKED_IN:
+      return {
+        ...state,
+        journey: {
+          ...state.journey,
+          vendors: state.journey.vendors.map((vendor, index) => 
+            index === action.payload.index 
+              ? { 
+                  ...vendor, 
+                  checkedIn: true,
+                  checkInType: action.payload.checkInType 
+                } 
+              : vendor
+          )
+        }
+      };
+
     default:
       return state;
   }
@@ -380,9 +398,8 @@ export const AppActions = {
     payload: username
   }),
 
-    // In your AppActions object definition
   setCurrentVendorIndex: (index) => ({
-    type: 'SET_CURRENT_VENDOR_INDEX',
+    type: ActionTypes.SET_CURRENT_VENDOR_INDEX,
     payload: index
   }),
   
@@ -411,9 +428,17 @@ export const AppActions = {
     payload: journeyData
   }),
   
-  endJourney: () => ({
-    type: ActionTypes.END_JOURNEY
-  }),
+  endJourney: () => {
+    // Clear journey data from storage when the action is dispatched
+    AsyncStorage.multiRemove([
+      'current_journey', 
+      'current_route_data'
+    ]).catch(error => {
+      Logger.error(LogCategory.STORAGE, 'Failed to clear journey data from storage', { error });
+    });
+    
+    return { type: ActionTypes.END_JOURNEY };
+  },
   
   nextVendor: () => ({
     type: ActionTypes.NEXT_VENDOR
@@ -446,5 +471,13 @@ export const AppActions = {
   setNotifications: (enabled) => ({
     type: ActionTypes.SET_NOTIFICATIONS,
     payload: enabled
+  }),
+  
+  markVendorCheckedIn: (vendorIndex, checkInType = 'qr') => ({
+    type: ActionTypes.MARK_VENDOR_CHECKED_IN,
+    payload: {
+      index: vendorIndex,
+      checkInType: checkInType
+    }
   })
 };

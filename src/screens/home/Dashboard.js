@@ -8,14 +8,18 @@ import {
   Image, 
   FlatList,
   RefreshControl,
-  Dimensions
+  Dimensions,
+  Alert
 } from 'react-native';
 import { Text, Button, Card, Icon, Divider, Badge } from '@rneui/themed';
-import { useAppState } from '../../context/AppStateContext';
+import { useAppState, AppActions } from '../../context/AppStateContext';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import routeService from '../../services/RouteService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import redemptionService from '../../services/RedemptionService';
 
 // Mock data service (will be replaced with proper implementation)
 import { getRecentVendors, getFeaturedDeals } from '../../services/MockDataService';
@@ -23,15 +27,69 @@ import { getRecentVendors, getFeaturedDeals } from '../../services/MockDataServi
 const { width } = Dimensions.get('window');
 
 const Dashboard = ({ navigation }) => {
-  const { state } = useAppState();
+  const { state, dispatch } = useAppState();
   const [refreshing, setRefreshing] = useState(false);
   const [featuredDeals, setFeaturedDeals] = useState([]);
   const [recentVendors, setRecentVendors] = useState([]);
   const [activeJourney, setActiveJourney] = useState(null);
+  const [metrics, setMetrics] = useState({
+    today: { count: 0, uniqueVendors: 0 },
+    total: { count: 0, uniqueVendors: 0 }
+  });
   
   // Load data on component mount
   useEffect(() => {
     loadDashboardData();
+  }, []);
+  
+  // Load metrics in useEffect
+  useEffect(() => {
+    const loadMetrics = async () => {
+      const stats = await redemptionService.getRedemptionStats();
+      setMetrics(stats);
+    };
+    
+    loadMetrics();
+  }, []);
+  
+  // Modified useEffect that loads journey data
+  useEffect(() => {
+    const checkForActiveJourney = async () => {
+      try {
+        // Check if there's an active journey in AsyncStorage
+        const storedJourney = await AsyncStorage.getItem('current_journey');
+        
+        if (storedJourney) {
+          const journey = JSON.parse(storedJourney);
+          
+          // Verify journey is valid and not completed
+          if (journey && !journey.completedAt) {
+            // Check if journey is expired (optional)
+            const journeyDate = new Date(journey.createdAt);
+            const now = new Date();
+            const journeyAge = now - journeyDate;
+            const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+            
+            if (journeyAge <= ONE_DAY) {
+              // Journey is valid and not expired
+              setActiveJourney({
+                dealType: journey.dealType,
+                progress: `${journey.currentVendorIndex + 1}/${journey.totalVendors}`,
+                currentVendor: journey.vendors[journey.currentVendorIndex]
+              });
+              return;
+            }
+          }
+        }
+        
+        // No valid journey found, ensure activeJourney is null
+        setActiveJourney(null);
+      } catch (error) {
+        Logger.error(LogCategory.JOURNEY, 'Error checking for active journey', { error });
+        setActiveJourney(null);
+      }
+    };
+    
     checkForActiveJourney();
   }, []);
   
@@ -47,6 +105,10 @@ const Dashboard = ({ navigation }) => {
         const vendors = await getRecentVendors();
         setRecentVendors(vendors);
         
+        // Refresh metrics
+        const stats = await redemptionService.getRedemptionStats();
+        setMetrics(stats);
+        
         Logger.info(LogCategory.GENERAL, 'Dashboard data loaded successfully');
       }, LogCategory.GENERAL, 'loading dashboard data', false);
     } catch (error) {
@@ -56,19 +118,9 @@ const Dashboard = ({ navigation }) => {
     }
   };
   
-  const checkForActiveJourney = () => {
-    if (state.journey && state.journey.isActive) {
-      setActiveJourney({
-        dealType: state.journey.dealType,
-        progress: `${state.journey.currentVendorIndex + 1}/${state.journey.totalVendors}`,
-        currentVendor: state.journey.vendors[state.journey.currentVendorIndex]
-      });
-    }
-  };
-  
   const onRefresh = () => {
     loadDashboardData();
-    checkForActiveJourney();
+    // We don't need to call checkForActiveJourney here as it's handled by the useEffect
   };
   
   const navigateToDealType = (dealType) => {
@@ -167,12 +219,64 @@ const Dashboard = ({ navigation }) => {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
+        {/* Activity Metrics */}
+        <View style={styles.metricsContainer}>
+          <Text style={styles.metricsTitle}>Today's Activity</Text>
+          <View style={styles.metricsRow}>
+            <View style={styles.metricItem}>
+              <Text style={styles.metricValue}>{metrics.today.count}</Text>
+              <Text style={styles.metricLabel}>Deals</Text>
+            </View>
+            <View style={styles.metricItem}>
+              <Text style={styles.metricValue}>{metrics.today.uniqueVendors}</Text>
+              <Text style={styles.metricLabel}>Vendors</Text>
+            </View>
+          </View>
+        </View>
+        
         {/* Active Journey Card (if any) */}
         {activeJourney && (
           <Card containerStyle={styles.activeJourneyCard}>
             <View style={styles.journeyHeader}>
               <Text style={styles.journeyTitle}>Active Journey</Text>
               <Badge value={activeJourney.progress} status="success" />
+              <TouchableOpacity 
+                style={styles.closeJourneyButton}
+                onPress={() => {
+                  // Show confirmation dialog
+                  Alert.alert(
+                    'Close Journey',
+                    'Are you sure you want to dismiss this journey? You can still resume it later.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { 
+                        text: 'Dismiss', 
+                        style: 'destructive',
+                        onPress: () => {
+                          // Just hide the banner, don't clear the journey state
+                          setActiveJourney(null);
+                        }
+                      },
+                      {
+                        text: 'End Journey',
+                        onPress: async () => {
+                          try {
+                            // Clean up journey data completely
+                            await routeService.clearCurrentJourney();
+                            dispatch(AppActions.endJourney());
+                            setActiveJourney(null);
+                          } catch (error) {
+                            Logger.error(LogCategory.JOURNEY, 'Error ending journey from banner', { error });
+                            setActiveJourney(null);
+                          }
+                        }
+                      }
+                    ]
+                  );
+                }}
+              >
+                <Icon name="close" type="material" size={16} color="#FFF" />
+              </TouchableOpacity>
             </View>
             <Text style={styles.journeyType}>
               {activeJourney.dealType === 'birthday' ? 'Birthday Deals' : 'Daily Specials'}
@@ -310,6 +414,36 @@ const styles = StyleSheet.create({
     marginLeft: 4,
     fontWeight: 'bold',
     color: '#4CAF50',
+  },
+  metricsContainer: {
+    margin: 20,
+    marginBottom: 10,
+    padding: 15,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+  },
+  metricsTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: '#333333',
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  metricItem: {
+    alignItems: 'center',
+  },
+  metricValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+  },
+  metricLabel: {
+    fontSize: 14,
+    color: '#666666',
+    marginTop: 4,
   },
   sectionContainer: {
     marginBottom: 24,
@@ -492,6 +626,17 @@ const styles = StyleSheet.create({
     color: '#999999',
     fontStyle: 'italic',
     textAlign: 'center',
+  },
+  closeJourneyButton: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 

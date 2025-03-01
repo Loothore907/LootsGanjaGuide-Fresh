@@ -16,11 +16,15 @@ import {
   Icon
 } from '@rneui/themed';
 import { Camera } from 'expo-camera';
+import * as Location from 'expo-location';
 import { useAppState, AppActions } from '../../context/AppStateContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
 import { checkInAtVendor, getVendorById } from '../../services/MockDataService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import redemptionService from '../../services/RedemptionService';
+import locationService from '../../services/LocationService';
 
 const VendorCheckin = ({ route, navigation }) => {
   const { state, dispatch } = useAppState();
@@ -31,6 +35,7 @@ const VendorCheckin = ({ route, navigation }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [scannedVendor, setScannedVendor] = useState(null);
   const [torchOn, setTorchOn] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
   
   // Request camera permissions and check if direct vendor ID was provided
   useEffect(() => {
@@ -140,8 +145,24 @@ const VendorCheckin = ({ route, navigation }) => {
         // Process check-in
         const result = await checkInAtVendor(scannedVendor.id);
         
+        // Record the deal redemption
+        await redemptionService.recordRedemption(
+          scannedVendor.id, 
+          state.journey.dealType,
+          `${state.journey.dealType}-${scannedVendor.id}`
+        );
+        
         // Update points
         dispatch(AppActions.updatePoints(result.pointsEarned));
+        
+        // Update journey state to mark vendor as checked in
+        if (state.journey && state.journey.isActive) {
+          const currentVendorIndex = state.journey.currentVendorIndex;
+          if (currentVendorIndex >= 0 && currentVendorIndex < state.journey.vendors.length) {
+            // Mark the current vendor as checked in with 'qr' type
+            dispatch(AppActions.markVendorCheckedIn(currentVendorIndex, 'qr'));
+          }
+        }
         
         // Add to recent visits
         const visit = {
@@ -152,15 +173,25 @@ const VendorCheckin = ({ route, navigation }) => {
         };
         dispatch(AppActions.addRecentVisit(visit));
         
+        // Check user preferences for social sharing
+        const userSocialPrefs = await AsyncStorage.getItem('social_sharing_prefs');
+        const sharingEnabled = userSocialPrefs ? JSON.parse(userSocialPrefs).enabled : false;
+        
+        // Attempt automatic social sharing if enabled
+        if (sharingEnabled) {
+          await autoShareCheckin(scannedVendor);
+        }
+        
         // Show success message
         Alert.alert(
           'Check-in Successful!',
           `You have earned ${result.pointsEarned} points for checking in at ${scannedVendor.name}.`,
           [
-            { 
+            // Only show share option if not already automatically shared
+            ...(sharingEnabled ? [] : [{ 
               text: 'Share',
               onPress: () => handleShareCheckin() 
-            },
+            }]),
             {
               text: 'Continue',
               onPress: () => handleContinueJourney()
@@ -225,11 +256,34 @@ const VendorCheckin = ({ route, navigation }) => {
   const handleContinueJourney = () => {
     // Check if we're in a journey
     if (fromJourney) {
-      // Advance to next vendor in journey
-      dispatch(AppActions.nextVendor());
+      // Get journey state
+      const journeyVendors = state.journey?.vendors || [];
+      const currentIndex = state.journey?.currentVendorIndex || 0;
+      const isLastVendor = currentIndex === journeyVendors.length - 1;
       
-      // Navigate back to route view
-      navigation.navigate('RouteMapView');
+      if (isLastVendor) {
+        // This is the last vendor, complete the journey
+        // Create a complete journey data object to pass
+        const completeJourneyData = {
+          journeyType: state.journey.dealType,
+          vendors: state.journey.vendors,
+          currentVendorIndex: state.journey.currentVendorIndex,
+          totalVendors: state.journey.totalVendors,
+          totalDistance: state.route.totalDistance
+        };
+        
+        // Navigate to journey complete with the data
+        navigation.navigate('JourneyComplete', { 
+          terminationType: "success",
+          journeyData: completeJourneyData
+        });
+      } else {
+        // Not the last vendor, advance to next vendor
+        dispatch(AppActions.nextVendor());
+        
+        // Navigate back to route view
+        navigation.navigate('RouteMapView');
+      }
     } else {
       // Just go to vendor profile
       navigation.navigate('VendorProfile', { vendorId: scannedVendor.id });
@@ -243,6 +297,251 @@ const VendorCheckin = ({ route, navigation }) => {
   // Toggle flashlight/torch
   const toggleTorch = () => {
     setTorchOn(prevTorchOn => !prevTorchOn);
+  };
+  
+  // Helper function for automated social sharing
+  const autoShareCheckin = async (vendor) => {
+    try {
+      // Get user social media preferences
+      const socialPrefs = await AsyncStorage.getItem('social_sharing_prefs');
+      const prefs = socialPrefs ? JSON.parse(socialPrefs) : { tier: 'none' };
+      
+      // Check if vendor has social media
+      const hasVendorSocial = vendor.contact?.social?.instagram || vendor.contact?.social?.facebook;
+      
+      // Skip if vendor has no social media
+      if (!hasVendorSocial) {
+        Logger.info(LogCategory.SOCIAL, 'Skipped auto-sharing: vendor has no social accounts');
+        return;
+      }
+      
+      // Determine user info to share based on preference tier
+      let username;
+      switch(prefs.tier) {
+        case 'full': // Share real name/info
+          username = prefs.realName || state.user.username;
+          break;
+        case 'username': // Share only username
+          username = state.user.username;
+          break;
+        case 'anonymous': // Use anonymous name
+          username = 'Drug Crazed Hermit'; // As specified in your requirements
+          break;
+        default:
+          // Don't share anything if tier is 'none'
+          return;
+      }
+      
+      // Prepare share message
+      const shareMessage = `${username} just checked in at ${vendor.name} using Loot's Ganja Guide! #LootsGanjaGuide #Cannabis #${vendor.name.replace(/\s+/g, '')}`;
+      
+      // Log the sharing but don't actually perform sharing in this mock implementation
+      Logger.info(LogCategory.SOCIAL, 'Auto-shared check-in', {
+        vendor: vendor.name,
+        socialTier: prefs.tier,
+        message: shareMessage
+      });
+      
+      return { success: true, message: shareMessage };
+    } catch (error) {
+      Logger.error(LogCategory.SOCIAL, 'Error in automated social sharing', { error });
+      return { success: false };
+    }
+  };
+  
+  // Determine what check-in options to show based on vendor status
+  const renderCheckinOptions = () => {
+    // Determine if vendor has QR code capability
+    const hasQrOption = scannedVendor.hasQrCode === true;
+    
+    return (
+      <View style={styles.checkinOptionsContainer}>
+        {hasQrOption ? (
+          // Vendor has QR code option
+          <>
+            <Button
+              title="Scan QR Code"
+              icon={{
+                name: "qr-code-scanner",
+                type: "material",
+                size: 20,
+                color: "white"
+              }}
+              onPress={activateScanner}
+              buttonStyle={styles.scanQrButton}
+              containerStyle={styles.buttonContainer}
+            />
+            
+            <Button
+              title="Skip QR Code (Half Points)"
+              icon={{
+                name: "cannabis",
+                type: "material",
+                size: 20,
+                color: "#666"
+              }}
+              type="outline"
+              onPress={() => handleManualCheckin(true)}
+              buttonStyle={styles.skipQrButton}
+              containerStyle={styles.buttonContainer}
+            />
+            
+            {/* Humorous message about QR codes */}
+            <View style={styles.qrInfoContainer}>
+              <Icon name="emoji-emotions" type="material" color="#4CAF50" size={20} />
+              <Text style={styles.qrInfoText}>
+                We get it - sometimes QR codes can be a pain! But they help us collect valuable data 
+                so we can build a better app. Plus, all those sweet rewards in the Points Shop? They're 
+                much easier to earn with full QR points! 🌿
+              </Text>
+            </View>
+            
+            <View style={styles.infoBox}>
+              <Icon name="info" type="material" size={20} color="#4CAF50" />
+              <Text style={styles.infoText}>
+                We use QR codes to collect valuable data that helps us improve the app! 
+                Full points for QR scans, half points for skipping.
+              </Text>
+            </View>
+          </>
+        ) : (
+          // Vendor without QR code option
+          <Button
+            title="I'm Here"
+            icon={{
+              name: "place",
+              type: "material",
+              size: 20,
+              color: "white"
+            }}
+            onPress={() => handleManualCheckin(false)}
+            buttonStyle={styles.imHereButton}
+            containerStyle={styles.buttonContainer}
+          />
+        )}
+      </View>
+    );
+  };
+
+  // Activate the QR scanner
+  const activateScanner = () => {
+    setShowScanner(true);
+  };
+
+  // Handle manual check-in with parameter to indicate if it's a QR skip
+  const handleManualCheckin = async (isQrSkip) => {
+    // Verify user is at the location using GPS
+    try {
+      const currentLocation = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High
+      });
+      
+      // Calculate distance to vendor
+      const vendorCoords = scannedVendor.location.coordinates;
+      const distance = locationService.calculateDistance(
+        currentLocation.coords.latitude,
+        currentLocation.coords.longitude,
+        vendorCoords.latitude,
+        vendorCoords.longitude
+      );
+      
+      // If close enough (within 100 meters), allow check-in
+      if (distance <= 0.062) { // ~100 meters in miles
+        // Determine points based on check-in type
+        let pointsValue = 10; // Default points for QR or non-QR vendor
+        let checkInType = 'manual';
+        
+        if (scannedVendor.hasQrCode && isQrSkip) {
+          pointsValue = 5; // Half points for skipping QR at a QR-enabled vendor
+          checkInType = 'qr_skipped';
+        }
+        
+        // Process the check-in
+        await processCheckin(pointsValue, checkInType);
+      } else {
+        // Too far away
+        Alert.alert(
+          'Too Far Away',
+          `You appear to be ${distance.toFixed(2)} miles from ${scannedVendor.name}. Please get closer to check in.`
+        );
+      }
+    } catch (error) {
+      Logger.error(LogCategory.LOCATION, 'Error getting location for manual check-in', { error });
+      Alert.alert('Error', 'Could not verify your location. Please try again.');
+    }
+  };
+
+  // Process check-in with points and type
+  const processCheckin = async (pointsValue, checkInType) => {
+    setIsLoading(true);
+    try {
+      // Process check-in
+      const result = await checkInAtVendor(scannedVendor.id);
+      
+      // Record the deal redemption
+      await redemptionService.recordRedemption(
+        scannedVendor.id, 
+        state.journey?.dealType || 'standard',
+        `${state.journey?.dealType || 'standard'}-${scannedVendor.id}`
+      );
+      
+      // Update points
+      dispatch(AppActions.updatePoints(pointsValue));
+      
+      // Mark vendor as checked in with type
+      if (state.journey?.isActive) {
+        const currentVendorIndex = state.journey.currentVendorIndex;
+        if (currentVendorIndex >= 0 && currentVendorIndex < state.journey.vendors.length) {
+          dispatch(AppActions.markVendorCheckedIn(currentVendorIndex, checkInType));
+        }
+      }
+      
+      // Add to recent visits
+      const visit = {
+        vendorId: scannedVendor.id,
+        vendorName: scannedVendor.name,
+        lastVisit: new Date().toISOString(),
+        visitCount: 1
+      };
+      dispatch(AppActions.addRecentVisit(visit));
+      
+      // Check user preferences for social sharing
+      const userSocialPrefs = await AsyncStorage.getItem('social_sharing_prefs');
+      const sharingEnabled = userSocialPrefs ? JSON.parse(userSocialPrefs).enabled : false;
+      
+      // Attempt automatic social sharing if enabled
+      if (sharingEnabled) {
+        await autoShareCheckin(scannedVendor);
+      }
+      
+      // Show success message
+      Alert.alert(
+        'Check-in Successful!',
+        `You have earned ${pointsValue} points for checking in at ${scannedVendor.name}.`,
+        [
+          // Only show share option if not already automatically shared
+          ...(sharingEnabled ? [] : [{ 
+            text: 'Share',
+            onPress: () => handleShareCheckin() 
+          }]),
+          {
+            text: 'Continue',
+            onPress: () => handleContinueJourney()
+          }
+        ]
+      );
+      
+      Logger.info(LogCategory.CHECKIN, 'User checked in', {
+        vendorId: scannedVendor.id,
+        pointsEarned: pointsValue,
+        method: checkInType
+      });
+    } catch (error) {
+      // Error already logged by tryCatch
+      Alert.alert('Error', 'Failed to process check-in. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
   
   if (hasPermission === null && !vendorId) {
@@ -280,59 +579,76 @@ const VendorCheckin = ({ route, navigation }) => {
   }
   
   if (scannedVendor) {
-    // Show check-in confirmation
+    // Show check-in confirmation or options
     return (
       <SafeAreaView style={styles.container}>
-        <View style={styles.confirmContainer}>
-          <Icon name="check-circle" type="material" size={64} color="#4CAF50" />
-          <Text style={styles.confirmTitle}>Welcome to {scannedVendor.name}!</Text>
-          <Text style={styles.confirmMessage}>
-            Don't forget to check in to earn points and share your visit!
-          </Text>
-          <Text style={styles.confirmVendor}>{scannedVendor.name}</Text>
-          <Text style={styles.confirmAddress}>{scannedVendor.location.address}</Text>
-          
-          <View style={styles.rewardContainer}>
-            <Icon name="loyalty" type="material" size={24} color="#4CAF50" />
-            <Text style={styles.rewardText}>You will earn 10 points</Text>
+        {showScanner ? (
+          // Show QR scanner
+          <View style={styles.scannerContainer}>
+            <Camera
+              style={styles.scanner}
+              onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+              type={1}
+              flashMode={torchOn ? 1 : 0}
+            >
+              <View style={styles.overlay}>
+                <View style={styles.unfilled} />
+                <View style={styles.row}>
+                  <View style={styles.unfilled} />
+                  <View style={styles.scanner} />
+                  <View style={styles.unfilled} />
+                </View>
+                <View style={styles.unfilled} />
+              </View>
+              
+              <View style={styles.instructionsContainer}>
+                <Text style={styles.instructionsText}>
+                  Scan the QR code at {scannedVendor.name} to check in
+                </Text>
+              </View>
+              
+              <TouchableOpacity 
+                style={styles.torchButton}
+                onPress={toggleTorch}
+              >
+                <Icon 
+                  name={torchOn ? "flash-on" : "flash-off"} 
+                  type="material" 
+                  color="#FFFFFF" 
+                  size={24} 
+                />
+              </TouchableOpacity>
+              
+              <Button
+                title="Cancel"
+                onPress={() => setShowScanner(false)}
+                buttonStyle={styles.cancelButton}
+                containerStyle={styles.cancelButtonContainer}
+              />
+            </Camera>
           </View>
-          
-          <Button
-            title="Confirm Check In"
-            onPress={handleConfirmCheckin}
-            loading={isLoading}
-            buttonStyle={styles.confirmButton}
-            containerStyle={styles.buttonContainer}
-            icon={{
-              name: "place",
-              type: "material",
-              size: 20,
-              color: "white"
-            }}
-          />
-          
-          <Button
-            title="Share to Social Media"
-            icon={{
-              name: "share",
-              type: "material",
-              size: 20,
-              color: "#4CAF50"
-            }}
-            type="outline"
-            buttonStyle={styles.shareButton}
-            containerStyle={styles.buttonContainer}
-            titleStyle={{ color: '#4CAF50' }}
-            onPress={handleShareCheckin}
-          />
-          
-          <Button
-            title="Cancel"
-            type="clear"
-            onPress={handleCancel}
-            containerStyle={styles.buttonContainer}
-          />
-        </View>
+        ) : (
+          // Show check-in options
+          <View style={styles.confirmContainer}>
+            <Icon name="check-circle" type="material" size={64} color="#4CAF50" />
+            <Text style={styles.confirmTitle}>Welcome to {scannedVendor.name}!</Text>
+            <Text style={styles.confirmMessage}>
+              Don't forget to check in to earn points and share your visit!
+            </Text>
+            <Text style={styles.confirmVendor}>{scannedVendor.name}</Text>
+            <Text style={styles.confirmAddress}>{scannedVendor.location.address}</Text>
+            
+            {/* Render check-in options based on vendor capabilities */}
+            {renderCheckinOptions()}
+            
+            <Button
+              title="Cancel"
+              type="clear"
+              onPress={handleCancel}
+              containerStyle={styles.buttonContainer}
+            />
+          </View>
+        )}
       </SafeAreaView>
     );
   }
@@ -574,6 +890,55 @@ const styles = StyleSheet.create({
     borderColor: '#4CAF50',
     borderRadius: 8,
     paddingVertical: 12,
+  },
+  checkinOptionsContainer: {
+    marginBottom: 20,
+    width: '100%',
+  },
+  infoBox: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F8E9', 
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 16,
+    alignItems: 'flex-start',
+  },
+  infoText: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#4CAF50',
+    lineHeight: 20,
+  },
+  scanQrButton: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  skipQrButton: {
+    borderColor: '#9E9E9E',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  imHereButton: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  qrInfoContainer: {
+    backgroundColor: '#F1F8E9',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  qrInfoText: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#4CAF50',
+    lineHeight: 20,
   },
 });
 
