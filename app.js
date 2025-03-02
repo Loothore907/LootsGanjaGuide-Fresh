@@ -58,7 +58,7 @@ const MainTabs = () => {
           let iconName;
 
           if (route.name === 'Home') {
-            iconName = focused ? 'home' : 'home-outline';
+            iconName = focused ? 'home' : 'home-variant-outline';
           } else if (route.name === 'Deals') {
             iconName = focused ? 'local-offer' : 'local-offer';
           } else if (route.name === 'Map') {
@@ -67,7 +67,7 @@ const MainTabs = () => {
             iconName = focused ? 'person' : 'person-outline';
           }
 
-          return <Icon name={iconName} type="material" size={size} color={color} />;
+          return <Icon name={iconName} type={route.name === 'Deals' ? 'material' : 'material-community'} size={size} color={color} />;
         },
         tabBarActiveTintColor: '#4CAF50',
         tabBarInactiveTintColor: 'gray',

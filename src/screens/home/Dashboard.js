@@ -9,7 +9,8 @@ import {
   FlatList,
   RefreshControl,
   Dimensions,
-  Alert
+  Alert,
+  ActivityIndicator
 } from 'react-native';
 import { Text, Button, Card, Icon, Divider, Badge } from '@rneui/themed';
 import { useAppState, AppActions } from '../../context/AppStateContext';
@@ -20,9 +21,7 @@ import { StatusBar } from 'expo-status-bar';
 import routeService from '../../services/RouteService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import redemptionService from '../../services/RedemptionService';
-
-// Mock data service (will be replaced with proper implementation)
-import { getRecentVendors, getFeaturedDeals } from '../../services/MockDataService';
+import { getAllVendors, getFeaturedDeals, getRecentVendors } from '../../services/MockDataService';
 
 const { width } = Dimensions.get('window');
 
@@ -37,9 +36,17 @@ const Dashboard = ({ navigation }) => {
     total: { count: 0, uniqueVendors: 0 }
   });
   
+  // State variables
+  const [isLoading, setIsLoading] = useState(false);
+  const [vendors, setVendors] = useState([]);
+  const [birthdayAvailable, setBirthdayAvailable] = useState(false);
+  const [dailyAvailable, setDailyAvailable] = useState(false);
+  const [specialAvailable, setSpecialAvailable] = useState(false);
+  
   // Load data on component mount
   useEffect(() => {
     loadDashboardData();
+    loadVendors();
   }, []);
   
   // Load metrics in useEffect
@@ -197,6 +204,103 @@ const Dashboard = ({ navigation }) => {
       </View>
     </TouchableOpacity>
   );
+  
+  // Load vendors and check availability
+  const loadVendors = async () => {
+    setIsLoading(true);
+    try {
+      const allVendors = await getAllVendors();
+      setVendors(allVendors);
+      
+      // Check availability of different deal types
+      checkDealAvailability(allVendors);
+    } catch (error) {
+      Logger.error(LogCategory.VENDOR, 'Error loading vendors', { error });
+      Alert.alert('Error', 'Failed to load dispensary data. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // Check which deal types are available
+  const checkDealAvailability = async (vendorList) => {
+    // Birthday deals
+    const birthdayDealVendors = vendorList.filter(vendor => 
+      vendor.deals?.birthday && Object.keys(vendor.deals.birthday).length > 0
+    );
+    
+    // Daily deals - check for today
+    const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const today = daysOfWeek[new Date().getDay()];
+    const dailyDealVendors = vendorList.filter(vendor => 
+      vendor.deals?.daily && 
+      vendor.deals.daily[today] && 
+      vendor.deals.daily[today].length > 0
+    );
+    
+    // Special deals - check if active
+    const now = new Date();
+    const specialDealVendors = vendorList.filter(vendor => 
+      vendor.deals?.special && 
+      vendor.deals.special.some(deal => {
+        const startDate = new Date(deal.startDate);
+        const endDate = new Date(deal.endDate);
+        return now >= startDate && now <= endDate;
+      })
+    );
+    
+    // Apply redemption filtering
+    const redeemableBirthday = await filterRedeemableVendors(birthdayDealVendors, 'birthday');
+    const redeemableDaily = await filterRedeemableVendors(dailyDealVendors, 'daily');
+    const redeemableSpecial = await filterRedeemableVendors(specialDealVendors, 'special');
+    
+    // Update state
+    setBirthdayAvailable(redeemableBirthday.length > 0);
+    setDailyAvailable(redeemableDaily.length > 0);
+    setSpecialAvailable(redeemableSpecial.length > 0);
+    
+    Logger.info(LogCategory.DEAL, 'Deal availability checked', {
+      birthdayCount: redeemableBirthday.length,
+      dailyCount: redeemableDaily.length,
+      specialCount: redeemableSpecial.length
+    });
+  };
+  
+  // Filter vendors by redemption status
+  const filterRedeemableVendors = async (vendorList, dealType) => {
+    if (!vendorList || vendorList.length === 0) {
+      return [];
+    }
+    
+    const redeemableVendors = [];
+    for (const vendor of vendorList) {
+      const canRedeem = await redemptionService.canRedeemDeal(vendor.id, dealType);
+      if (canRedeem) {
+        redeemableVendors.push(vendor);
+      }
+    }
+    
+    return redeemableVendors;
+  };
+  
+  // Handle journey selection
+  const handleSelectJourney = (dealType) => {
+    // Navigate to journey settings
+    navigation.navigate('JourneySettings', { dealType });
+    
+    Logger.info(LogCategory.JOURNEY, 'Journey type selected', { dealType });
+  };
+  
+  // Handle single vendor visit (for daily and special deals)
+  const handleSingleVendorVisit = async (dealType) => {
+    // This would typically find the best vendor for the selected deal type
+    // and navigate directly to the vendor profile or check-in
+    Alert.alert(
+      'Not Implemented',
+      'Single vendor visits are not fully implemented in this demo.',
+      [{ text: 'OK' }]
+    );
+  };
   
   return (
     <SafeAreaView style={styles.container}>
@@ -370,6 +474,131 @@ const Dashboard = ({ navigation }) => {
               <Text style={styles.emptyListText}>No recent visits yet</Text>
             }
           />
+        </View>
+        
+        <Text style={styles.sectionTitle}>Start a Journey</Text>
+        
+        {isLoading ? (
+          <ActivityIndicator size="large" color="#4CAF50" style={styles.loadingIndicator} />
+        ) : (
+          <View style={styles.journeyTypesContainer}>
+            {/* Birthday Deals Journey */}
+            <TouchableOpacity 
+              style={[
+                styles.journeyCard, 
+                !birthdayAvailable && styles.disabledJourneyCard
+              ]}
+              disabled={!birthdayAvailable}
+              onPress={() => handleSelectJourney('birthday')}
+            >
+              <View style={styles.journeyCardContent}>
+                <View style={styles.journeyIconContainer}>
+                  <Icon name="cake" type="material" size={32} color="#4CAF50" />
+                </View>
+                <View style={styles.journeyTextContainer}>
+                  <Text style={styles.journeyTitle}>Birthday Deals</Text>
+                  <Text style={styles.journeyDescription}>Create a custom route to visit multiple dispensaries with birthday specials.</Text>
+                </View>
+                <Icon name="chevron-right" type="material" size={24} color="#666" />
+              </View>
+              
+              {!birthdayAvailable && (
+                <View style={styles.unavailableOverlay}>
+                  <Text style={styles.unavailableText}>No redeemable deals available</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            
+            {/* Daily Deals Journey */}
+            <TouchableOpacity 
+              style={[
+                styles.journeyCard, 
+                !dailyAvailable && styles.disabledJourneyCard
+              ]}
+              disabled={!dailyAvailable}
+              onPress={() => handleSelectJourney('daily')}
+            >
+              <View style={styles.journeyCardContent}>
+                <View style={styles.journeyIconContainer}>
+                  <Icon name="today" type="material" size={32} color="#4CAF50" />
+                </View>
+                <View style={styles.journeyTextContainer}>
+                  <Text style={styles.journeyTitle}>Daily Deals</Text>
+                  <Text style={styles.journeyDescription}>Check out special deals available only today.</Text>
+                </View>
+                <Icon name="chevron-right" type="material" size={24} color="#666" />
+              </View>
+              
+              {!dailyAvailable && (
+                <View style={styles.unavailableOverlay}>
+                  <Text style={styles.unavailableText}>No redeemable deals available</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            
+            {/* Special Deals Journey */}
+            <TouchableOpacity 
+              style={[
+                styles.journeyCard, 
+                !specialAvailable && styles.disabledJourneyCard
+              ]}
+              disabled={!specialAvailable}
+              onPress={() => handleSelectJourney('special')}
+            >
+              <View style={styles.journeyCardContent}>
+                <View style={styles.journeyIconContainer}>
+                  <Icon name="stars" type="material" size={32} color="#4CAF50" />
+                </View>
+                <View style={styles.journeyTextContainer}>
+                  <Text style={styles.journeyTitle}>Special Promotions</Text>
+                  <Text style={styles.journeyDescription}>Limited-time special deals and promotions from partner dispensaries.</Text>
+                </View>
+                <Icon name="chevron-right" type="material" size={24} color="#666" />
+              </View>
+              
+              {!specialAvailable && (
+                <View style={styles.unavailableOverlay}>
+                  <Text style={styles.unavailableText}>No redeemable deals available</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+        
+        <Text style={styles.sectionTitle}>Quick Links</Text>
+        
+        <View style={styles.quickLinksContainer}>
+          <TouchableOpacity 
+            style={styles.quickLinkButton}
+            onPress={() => navigation.navigate('VendorList')}
+          >
+            <Icon name="storefront" type="material" size={24} color="#4CAF50" />
+            <Text style={styles.quickLinkText}>All Dispensaries</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.quickLinkButton}
+            onPress={() => navigation.navigate('RecentVisits')}
+          >
+            <Icon name="history" type="material" size={24} color="#4CAF50" />
+            <Text style={styles.quickLinkText}>Recent Visits</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.quickLinkButton}
+            onPress={() => navigation.navigate('UserProfile')}
+          >
+            <Icon name="account-circle" type="material" size={24} color="#4CAF50" />
+            <Text style={styles.quickLinkText}>My Profile</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.quickLinkButton}
+            onPress={() => navigation.navigate('PointsShop')}
+          >
+            <Icon name="redeem" type="material" size={24} color="#4CAF50" />
+            <Text style={styles.quickLinkText}>Points Shop</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -637,6 +866,79 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  loadingIndicator: {
+    marginVertical: 20,
+  },
+  journeyTypesContainer: {
+    marginBottom: 24,
+  },
+  journeyCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+    overflow: 'hidden', // For the overlay to be properly contained
+  },
+  journeyCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+  },
+  disabledJourneyCard: {
+    opacity: 0.7,
+  },
+  journeyIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#E8F5E9',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+  },
+  journeyTextContainer: {
+    flex: 1,
+  },
+  journeyDescription: {
+    fontSize: 14,
+    color: '#666666',
+  },
+  unavailableOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    padding: 8,
+  },
+  unavailableText: {
+    color: '#FFFFFF',
+    textAlign: 'center',
+    fontSize: 12,
+  },
+  quickLinksContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  quickLinkButton: {
+    width: '48%',
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
+    alignItems: 'center',
+  },
+  quickLinkText: {
+    marginTop: 8,
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333333',
   },
 });
 

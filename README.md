@@ -4,35 +4,81 @@
 A mobile application designed to help cannabis enthusiasts in Anchorage, Alaska discover and track local dispensary deals. The app creates optimized routes based on user preferences, facilitates check-ins at dispensaries, and rewards users with points for their journey completions.
 
 ## Features
-- Deal discovery (Birthday, Daily, and Special deals)
+- User authentication with age verification (21+) and local storage
+- Three deal discovery options:
+  - Birthday Deals - Special offers for your birthday month
+  - Daily Deals - Day-specific promotions at local dispensaries
+  - Special Deals - Limited-time offers and events
 - Route optimization based on location and preferences
-- QR code check-in system
-- Points reward system
-- Social media integration
-- Vendor partnership opportunities
-- Age verification (21+)
-- Local authentication
+- QR code check-in system at dispensaries
+- Points reward system with journey completion bonuses
+- Social media integration for sharing check-ins
+- Vendor partnership features with premium visibility
+- Comprehensive vendor profiles with details, hours, and deals
 
 ## Technology Stack
 - React Native / Expo
-- React Navigation
-- AsyncStorage for local data
-- Maps integration
-- QR code scanning capabilities
-- Social media APIs
+- React Navigation for screen management
+- AsyncStorage for local data persistence
+- Location services for mapping and routing
+- Camera integration for QR code scanning
+- Context API for state management
 
-## Project Status
-This repository contains a fresh implementation of the Loot's Ganja Guide app. The original codebase can be found at: https://github.com/Loothore907/LootsGanjaGuide.git
-
-We've created this fresh project to resolve dependency conflicts and implement an improved architecture.
+## Project Structure
+```
+src/
+├── screens/
+│   ├── auth/       # Authentication screens
+│   ├── deals/      # Deal discovery screens
+│   ├── navigation/ # Route and map screens
+│   ├── vendor/     # Vendor-related screens
+│   ├── journey/    # Journey completion screens
+│   └── profile/    # User profile screens
+├── components/     # Reusable components
+├── context/        # Global state management
+├── services/       # Business logic and API services
+├── utils/          # Helper functions and utilities
+└── types/          # Type definitions and schemas
+```
 
 ## Current Implementation Status
-- Created a fresh Expo/React Native project
-- Successfully configured the development environment with Android Studio emulator
-- Basic project structure established with directory hierarchy
-- Started implementation of authentication flow
-- AppStateContext implemented for state management
-- Core navigation flow defined
+- Created a fresh Expo/React Native project with proper dependency management
+- Implemented full authentication flow with age verification and returning user detection
+- Built deal discovery screens for all three deal types with filtering options
+- Developed journey planning and navigation system with route optimization
+- Created vendor profiles with comprehensive deal information
+- Implemented QR code check-in system with points rewards
+- Added user profiles with points tracking and redemption features
+- Integrated mock data services simulating backend APIs (to be replaced with real APIs)
+
+## Monetization Strategy
+- Integrated, non-intrusive advertising
+- Strategic partnerships with vendors
+- Premium placement in routes for partner dispensaries
+- Analytics for partner vendors
+- Focus on local, industry-related advertisers only
+
+## Development Roadmap
+
+### Phase 1: Core Functionality (Completed)
+- Authentication flow
+- Deal discovery screens
+- Vendor listing and filtering
+
+### Phase 2: Journey System (In Progress)
+- Route optimization
+- Map integration
+- Check-in functionality
+
+### Phase 3: User Engagement (Upcoming)
+- Points system
+- Social media sharing
+- User profiles and history
+
+### Phase 4: Vendor Integration (Planned)
+- Partner features
+- Analytics dashboard
+- Advertising system
 
 ## Prerequisites
 - Node.js (LTS version)
@@ -43,72 +89,39 @@ We've created this fresh project to resolve dependency conflicts and implement a
 ## Installation
 1. Clone the repository
 ```bash
-git clone https://github.com/YOUR_USERNAME/LootsGanjaGuide-Fresh.git
-cd LootsGanjaGuide-Fresh
+git clone https://github.com/YOUR_USERNAME/LootsGanjaGuide.git
+cd LootsGanjaGuide
+```
 
-Install dependencies
+2. Install dependencies
+```bash
+npm install
+```
 
-bashCopynpm install
+3. Start the development server
+```bash
+npx expo start
+```
 
-Start the development server
+## Development Setup
+- Ensure you have the latest version of Node.js installed
+- Install the Expo Go app on your mobile device for testing
+- Set up Android Studio for emulator testing
 
-bashCopynpx expo start
-Development Setup
+## Contributing
+- Fork the repository
+- Create your feature branch (git checkout -b feature/amazing-feature)
+- Commit your changes (git commit -m 'Add some amazing feature')
+- Push to the branch (git push origin feature/amazing-feature)
+- Open a Pull Request
 
-Ensure you have the latest version of Node.js installed
-Install the Expo Go app on your mobile device for testing
-Set up Android Studio for emulator testing
-
-Project Structure
-Copysrc/
-├── screens/
-│   ├── auth/       # Authentication screens
-│   ├── deals/      # Deal discovery screens
-│   ├── navigation/ # Route and map screens
-│   ├── vendor/     # Vendor-related screens
-│   └── journey/    # Journey completion screens
-├── components/     # Reusable components
-├── context/        # Application state management
-└── services/       # API and service integrations
-Development Roadmap
-Phase 1: Core Functionality (Current)
-
-Complete authentication flow
-Implement deal discovery screens
-Create vendor listing and filtering
-
-Phase 2: Journey System
-
-Implement route optimization
-Develop map integration
-Build check-in functionality
-
-Phase 3: User Engagement
-
-Implement points system
-Add social media sharing
-Create user profiles and history
-
-Phase 4: Vendor Integration
-
-Develop partner features
-Create analytics dashboard
-Implement advertising system
-
-Contributing
-
-Fork the repository
-Create your feature branch (git checkout -b feature/amazing-feature)
-Commit your changes (git commit -m 'Add some amazing feature')
-Push to the branch (git push origin feature/amazing-feature)
-Open a Pull Request
-
-License
+## License
 [License Type] - See LICENSE.md file for details
-Contact
-Project Owner: Loothore907
-Acknowledgments
 
-Local dispensary partners
-Anchorage cannabis community
-React Native and Expo community
+## Contact
+Project Owner: Loothore907
+
+## Acknowledgments
+- Local dispensary partners
+- Anchorage cannabis community
+- React Native and Expo community

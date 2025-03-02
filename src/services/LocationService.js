@@ -102,71 +102,104 @@ class LocationService {
   }
   
   /**
-   * Get the current device location
-   * @param {Object} options - Location options
-   * @param {boolean} options.highAccuracy - Whether to use high accuracy (default: true)
-   * @param {number} options.timeout - Timeout in milliseconds (default: 15000)
-   * @param {boolean} options.useLastKnown - Whether to use last known location if current fails
-   * @returns {Promise<Object|null>} - Location coordinates or null if unavailable
+   * Get the user's current location with improved error handling
+   * @returns {Promise<{latitude: number, longitude: number} | null>}
    */
-  async getCurrentLocation(options = {}) {
-    const { 
-      highAccuracy = true, 
-      timeout = 15000,
-      useLastKnown = true
-    } = options;
-    
+  async getCurrentLocation() {
     try {
-      // Check permissions first
-      const hasPermission = await this.hasPermissions();
-      if (!hasPermission) {
-        const granted = await this.requestPermissions();
-        if (!granted) {
-          Logger.warn(LogCategory.NAVIGATION, 'Location permission denied');
+      // First, check and request permission
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Logger.warn(LogCategory.LOCATION, 'Location permission denied', { status });
+        return null;
+      }
+      
+      // Try to get the location with a timeout
+      const locationPromise = Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced
+      });
+      
+      // Set a timeout of 10 seconds
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Location request timed out')), 10000);
+      });
+      
+      try {
+        // Race the location request against the timeout
+        const location = await Promise.race([locationPromise, timeoutPromise]);
+        
+        if (location && location.coords) {
+          Logger.info(LogCategory.LOCATION, 'Successfully obtained user location', {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude
+          });
+          
+          return {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude
+          };
+        } else {
+          throw new Error('Invalid location data received');
+        }
+      } catch (innerError) {
+        // Handle timeout or other errors during location fetching
+        Logger.error(LogCategory.LOCATION, 'Error during location acquisition', {
+          error: innerError.message || 'Unknown error',
+          stack: innerError.stack
+        });
+        
+        // Fallback to last known location if available
+        return this.getLastKnownLocation();
+      }
+    } catch (error) {
+      Logger.error(LogCategory.LOCATION, 'Error in getCurrentLocation', {
+        error: error.message || 'Unknown error',
+        stack: error.stack
+      });
+      return null;
+    }
+  }
+  
+  /**
+   * Get the last known location as a fallback
+   * @returns {Promise<{latitude: number, longitude: number} | null>}
+   */
+  async getLastKnownLocation() {
+    try {
+      const location = await Location.getLastKnownPositionAsync();
+      
+      if (location && location.coords) {
+        Logger.info(LogCategory.LOCATION, 'Using last known location', {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude
+        });
+        
+        return {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude
+        };
+      } else {
+        // If no last known location, use a default Anchorage location
+        // This is a fallback for development purposes
+        if (__DEV__) {
+          Logger.warn(LogCategory.LOCATION, 'Using default Anchorage location (dev only)');
+          
+          return {
+            latitude: 61.2181,
+            longitude: -149.9003
+          };
+        } else {
+          // In production, don't use a default location
           return null;
         }
       }
-      
-      // Get current position with timeout
-      const locationPromise = Location.getCurrentPositionAsync({
-        accuracy: highAccuracy ? Location.Accuracy.High : Location.Accuracy.Balanced
-      });
-      
-      // Create a timeout promise
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Location request timed out')), timeout);
-      });
-      
-      // Race the promises
-      const location = await Promise.race([locationPromise, timeoutPromise]);
-      
-      if (location && location.coords) {
-        this.lastKnownLocation = location.coords;
-        
-        // Store last known location
-        await AsyncStorage.setItem('last_known_location', JSON.stringify(location.coords));
-        
-        Logger.debug(LogCategory.NAVIGATION, 'Got current location', {
-          coords: {
-            lat: location.coords.latitude,
-            lng: location.coords.longitude,
-            accuracy: location.coords.accuracy
-          }
-        });
-        
-        return location.coords;
-      }
     } catch (error) {
-      Logger.error(LogCategory.NAVIGATION, 'Error getting current location', { error });
-      
-      // Return last known location as fallback if enabled
-      if (useLastKnown && this.lastKnownLocation) {
-        Logger.info(LogCategory.NAVIGATION, 'Using last known location as fallback');
-        return this.lastKnownLocation;
-      }
+      Logger.error(LogCategory.LOCATION, 'Error getting last known location', {
+        error: error.message || 'Unknown error'
+      });
+      return null;
     }
-    
-    return null;
   }
   
   /**
@@ -293,27 +326,46 @@ class LocationService {
   }
   
   /**
-   * Calculate distance between two coordinate points using Haversine formula
+   * Calculate distance between two coordinates using the Haversine formula
    * @param {number} lat1 - Latitude of first point
    * @param {number} lon1 - Longitude of first point
    * @param {number} lat2 - Latitude of second point
    * @param {number} lon2 - Longitude of second point
-   * @param {boolean} inMiles - Whether to return result in miles (default: true)
-   * @returns {number} - Distance between points in miles or kilometers
+   * @returns {number} - Distance in miles
    */
-  calculateDistance(lat1, lon1, lat2, lon2, inMiles = true) {
-    const dLat = this.deg2rad(lat2 - lat1);
-    const dLon = this.deg2rad(lon2 - lon1);
+  calculateDistance(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2) {
+      return 0; // Return 0 if any parameters are missing
+    }
     
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(this.deg2rad(lat1)) * Math.cos(this.deg2rad(lat2)) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    const distanceKm = this.EARTH_RADIUS_KM * c;
-    
-    return inMiles ? distanceKm * this.MILES_PER_KM : distanceKm;
+    try {
+      // Haversine formula
+      const R = 3958.8; // Earth's radius in miles
+      const dLat = this.toRadians(lat2 - lat1);
+      const dLon = this.toRadians(lon2 - lon1);
+      
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(this.toRadians(lat1)) * Math.cos(this.toRadians(lat2)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      const distance = R * c;
+      
+      return distance;
+    } catch (error) {
+      Logger.error(LogCategory.LOCATION, 'Error calculating distance', { error });
+      return 0;
+    }
+  }
+  
+  /**
+   * Convert degrees to radians
+   * @param {number} degrees - Angle in degrees
+   * @returns {number} - Angle in radians
+   */
+  toRadians(degrees) {
+    return degrees * Math.PI / 180;
   }
   
   /**

@@ -5,6 +5,8 @@ import { Logger, LogCategory } from './LoggingService';
 import { tryCatch } from '../utils/ErrorHandler';
 import locationService from './LocationService';
 import env from '../config/env';
+import { getAllVendors } from './MockDataService';
+import redemptionService from './RedemptionService';
 
 /**
  * Service for route planning, optimization, and journey tracking
@@ -69,173 +71,189 @@ class RouteService {
   }
   
   /**
-   * Create an optimized route between multiple vendors
-   * @param {Array<string>} vendorIds - Array of vendor IDs to visit
+   * Create a journey route based on deal type and preferences
    * @param {Object} options - Route options
-   * @param {Object} options.startLocation - Starting coordinates (uses current location if not provided)
-   * @param {string} options.dealType - Type of deals being pursued
-   * @param {number} options.maxDistance - Maximum total distance in miles
-   * @returns {Promise<Object>} - Optimized route information
+   * @param {string} options.dealType - Type of deal to search for (birthday, daily, special)
+   * @param {number} options.maxVendors - Maximum number of vendors to include
+   * @param {number} options.maxDistance - Maximum distance in miles
+   * @param {Object} options.startLocation - Starting coordinates {latitude, longitude}
+   * @returns {Promise<Object>} - Route object with vendors and path
    */
-  async createOptimizedRoute(vendorIds, options = {}) {
+  async createRoute(options) {
+    const { dealType, maxVendors = 3, maxDistance = 15, startLocation } = options;
+    
+    Logger.info(LogCategory.ROUTE, 'Creating route', { 
+      dealType, maxVendors, maxDistance, startLocation 
+    });
+    
     try {
-      const { dealType = 'daily', maxDistance = 25 } = options;
+      // 1. Get all vendors
+      let allVendors = await getAllVendors();
       
-      // Validate inputs
-      if (!vendorIds || !Array.isArray(vendorIds) || vendorIds.length === 0) {
-        throw new Error('No vendor IDs provided for route creation');
-      }
+      // 2. Filter vendors by deal type
+      let filteredVendors = this.filterVendorsByDealType(allVendors, dealType);
       
-      // Limit number of stops
-      if (vendorIds.length > this.MAX_STOPS) {
-        Logger.warn(LogCategory.JOURNEY, `Route contains ${vendorIds.length} stops, limiting to ${this.MAX_STOPS}`);
-        vendorIds = vendorIds.slice(0, this.MAX_STOPS);
-      }
+      // 3. Filter out vendors with recently redeemed deals
+      filteredVendors = await redemptionService.filterRedeemableVendors(filteredVendors, dealType);
       
-      // Get start location (user's current location or provided location)
-      let startLocation = options.startLocation;
+      Logger.info(LogCategory.ROUTE, `Filtered ${allVendors.length} vendors down to ${filteredVendors.length} based on deal type and redemption status`);
       
-      if (!startLocation) {
-        const userLocation = await locationService.getCurrentLocation();
-        
-        if (userLocation) {
-          startLocation = {
-            latitude: userLocation.latitude,
-            longitude: userLocation.longitude
-          };
-        } else {
-          // Use default location as fallback
-          startLocation = {
-            latitude: env.DEFAULT_LATITUDE,
-            longitude: env.DEFAULT_LONGITUDE
-          };
-          
-          Logger.warn(LogCategory.JOURNEY, 'Using default location for route creation due to missing user location');
-        }
-      }
-      
-      // Get vendor data from the API or mock service
-      // In a real implementation, you would call your API service here
-      // For now, we'll use mock data with the assumption vendor details would be fetched
-      
-      // This would be replaced with a call to your API
-      const vendors = vendorIds.map(id => {
-        // Pretend we got this data from the API
+      if (filteredVendors.length === 0) {
+        Logger.warn(LogCategory.ROUTE, 'No eligible vendors found for route');
         return {
-          id,
-          name: `Vendor ${id}`,
-          location: {
-            address: `${id} Cannabis Street, Anchorage, AK`,
-            coordinates: {
-              // Generate random coordinates around Anchorage for testing
-              latitude: env.DEFAULT_LATITUDE + (Math.random() - 0.5) * 0.05,
-              longitude: env.DEFAULT_LONGITUDE + (Math.random() - 0.5) * 0.05
-            }
-          },
-          // Other vendor data would be here
+          success: false,
+          error: 'No eligible vendors found with the selected deal type'
         };
-      });
-      
-      // Calculate distances from start location to each vendor
-      for (const vendor of vendors) {
-        vendor.distanceFromStart = locationService.calculateDistance(
-          startLocation.latitude,
-          startLocation.longitude,
-          vendor.location.coordinates.latitude,
-          vendor.location.coordinates.longitude
-        );
       }
       
-      // Route optimization algorithm
-      // In a production app, this would be replaced with a more sophisticated algorithm
-      // or a call to a routing API like Google Directions or Mapbox Directions
-      
-      // Simple approach: sort by distance from start (nearest first)
-      const sortedVendors = [...vendors].sort((a, b) => a.distanceFromStart - b.distanceFromStart);
-      
-      // Calculate total route distance
-      let totalDistance = 0;
-      let prevLat = startLocation.latitude;
-      let prevLng = startLocation.longitude;
-      
-      for (const vendor of sortedVendors) {
-        const distance = locationService.calculateDistance(
-          prevLat,
-          prevLng,
-          vendor.location.coordinates.latitude,
-          vendor.location.coordinates.longitude
-        );
-        
-        totalDistance += distance;
-        
-        // Update for next iteration
-        prevLat = vendor.location.coordinates.latitude;
-        prevLng = vendor.location.coordinates.longitude;
-        
-        // Calculate individual vendor distance from start (for display)
-        vendor.distance = vendor.distanceFromStart;
-        
-        // Remove the temporary property
-        delete vendor.distanceFromStart;
+      // 4. Filter vendors by distance and sort by proximity
+      if (startLocation) {
+        filteredVendors = this.filterVendorsByDistance(filteredVendors, startLocation, maxDistance);
       }
       
-      // Calculate estimated travel time (minutes)
-      const estimatedTime = Math.ceil(totalDistance / this.DEFAULT_SPEED_MPH * 60);
+      // 5. Limit to max vendors and optimize route
+      const routeVendors = this.optimizeRoute(filteredVendors, startLocation, maxVendors);
       
-      // Create route coordinates array (for map display)
-      const coordinates = [
-        { latitude: startLocation.latitude, longitude: startLocation.longitude }
-      ];
+      // 6. Calculate total distance and create route object
+      const totalDistance = this.calculateRouteDistance(routeVendors, startLocation);
       
-      sortedVendors.forEach(vendor => {
-        coordinates.push({
-          latitude: vendor.location.coordinates.latitude,
-          longitude: vendor.location.coordinates.longitude
-        });
-      });
+      Logger.info(LogCategory.ROUTE, `Created route with ${routeVendors.length} vendors, total distance: ${totalDistance.toFixed(2)} miles`);
       
-      // Create route object
-      const route = {
-        vendors: sortedVendors,
+      return {
+        success: true,
+        vendors: routeVendors,
         totalDistance,
-        estimatedTime,
-        startLocation,
-        coordinates
+        dealType
       };
-      
-      // Save current journey and route data
-      this.currentJourney = {
-        dealType,
-        vendors: sortedVendors,
-        currentVendorIndex: 0,
-        maxDistance,
-        totalVendors: sortedVendors.length,
-        createdAt: new Date().toISOString()
-      };
-      
-      this.routeData = {
-        coordinates,
-        totalDistance,
-        estimatedTime
-      };
-      
-      // Persist to storage
-      await Promise.all([
-        AsyncStorage.setItem('current_journey', JSON.stringify(this.currentJourney)),
-        AsyncStorage.setItem('current_route_data', JSON.stringify(this.routeData))
-      ]);
-      
-      Logger.info(LogCategory.JOURNEY, 'Created optimized route', {
-        vendorCount: sortedVendors.length,
-        totalDistance,
-        estimatedTime
-      });
-      
-      return route;
     } catch (error) {
-      Logger.error(LogCategory.JOURNEY, 'Error creating optimized route', { error });
-      throw error;
+      Logger.error(LogCategory.ROUTE, 'Error creating route', { error });
+      return {
+        success: false,
+        error: 'Failed to create route'
+      };
     }
+  }
+  
+  /**
+   * Filter vendors by deal type
+   * @param {Array} vendors - List of all vendors
+   * @param {string} dealType - Type of deal to filter for
+   * @returns {Array} - Filtered vendors
+   */
+  filterVendorsByDealType(vendors, dealType) {
+    return vendors.filter(vendor => {
+      // Skip vendors without deals
+      if (!vendor.deals) return false;
+      
+      switch (dealType) {
+        case 'birthday':
+          return !!vendor.deals.birthday;
+        case 'daily':
+          // Check for deals on the current day
+          const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+          const currentDay = daysOfWeek[new Date().getDay()];
+          return vendor.deals.daily && 
+                 vendor.deals.daily[currentDay] && 
+                 vendor.deals.daily[currentDay].length > 0;
+        case 'special':
+          // Check for active special deals
+          const now = new Date();
+          const activeSpecials = vendor.deals.special?.filter(deal => {
+            const startDate = new Date(deal.startDate);
+            const endDate = new Date(deal.endDate);
+            return now >= startDate && now <= endDate;
+          }) || [];
+          return activeSpecials.length > 0;
+        default:
+          return false;
+      }
+    });
+  }
+  
+  /**
+   * Filter vendors by distance from starting point
+   * @param {Array} vendors - List of vendors
+   * @param {Object} startLocation - Starting coordinates
+   * @param {number} maxDistance - Maximum distance in miles
+   * @returns {Array} - Filtered and sorted vendors
+   */
+  filterVendorsByDistance(vendors, startLocation, maxDistance) {
+    // Add distance to each vendor
+    const vendorsWithDistance = vendors.map(vendor => {
+      const distance = locationService.calculateDistance(
+        startLocation.latitude,
+        startLocation.longitude,
+        vendor.location.coordinates.latitude,
+        vendor.location.coordinates.longitude
+      );
+      
+      return {
+        ...vendor,
+        distance
+      };
+    });
+    
+    // Filter by max distance and sort by proximity
+    return vendorsWithDistance
+      .filter(vendor => vendor.distance <= maxDistance)
+      .sort((a, b) => a.distance - b.distance);
+  }
+  
+  /**
+   * Optimize route using a simple greedy algorithm
+   * @param {Array} vendors - Filtered vendors with distances
+   * @param {Object} startLocation - Starting coordinates
+   * @param {number} maxVendors - Maximum number of vendors
+   * @returns {Array} - Optimized route vendors
+   */
+  optimizeRoute(vendors, startLocation, maxVendors) {
+    // If no vendors, return empty array
+    if (vendors.length === 0) return [];
+    
+    // Limit to max vendors if needed
+    let selectedVendors = vendors.slice(0, maxVendors);
+    
+    // If no starting location or only one vendor, just return the selection
+    if (!startLocation || selectedVendors.length <= 1) {
+      return selectedVendors;
+    }
+    
+    // TODO: Implement more sophisticated route optimization if needed
+    // For now, we're just taking the closest vendors, which is already done
+    
+    return selectedVendors;
+  }
+  
+  /**
+   * Calculate total route distance
+   * @param {Array} vendors - Ordered vendors in route
+   * @param {Object} startLocation - Starting coordinates
+   * @returns {number} - Total distance in miles
+   */
+  calculateRouteDistance(vendors, startLocation) {
+    if (!vendors || vendors.length === 0 || !startLocation) {
+      return 0;
+    }
+    
+    let totalDistance = 0;
+    let previousCoords = startLocation;
+    
+    // Calculate distance between each point
+    vendors.forEach(vendor => {
+      const vendorCoords = vendor.location.coordinates;
+      
+      const segmentDistance = locationService.calculateDistance(
+        previousCoords.latitude,
+        previousCoords.longitude,
+        vendorCoords.latitude,
+        vendorCoords.longitude
+      );
+      
+      totalDistance += segmentDistance;
+      previousCoords = vendorCoords;
+    });
+    
+    return totalDistance;
   }
   
   /**
@@ -524,60 +542,6 @@ class RouteService {
       Logger.error(LogCategory.STORAGE, 'Error getting journey history', { error });
       return [];
     }
-  }
-  
-  /**
-   * Calculate optimal order for visiting multiple vendors
-   * @private
-   * @param {Array<Object>} vendors - Array of vendor objects with coordinates
-   * @param {Object} startLocation - Starting coordinates
-   * @returns {Array<Object>} - Vendors in optimal visit order
-   */
-  _calculateOptimalOrder(vendors, startLocation) {
-    // This is a simple implementation of the nearest neighbor algorithm
-    // In a production app, consider using a more sophisticated algorithm for optimal routing
-    
-    // Make a copy of vendors to avoid modifying the original
-    const remainingVendors = [...vendors];
-    const orderedVendors = [];
-    
-    let currentLat = startLocation.latitude;
-    let currentLng = startLocation.longitude;
-    
-    // Keep selecting the nearest vendor until all vendors are visited
-    while (remainingVendors.length > 0) {
-      // Find vendor closest to current position
-      let nearestIndex = 0;
-      let nearestDistance = Number.MAX_VALUE;
-      
-      for (let i = 0; i < remainingVendors.length; i++) {
-        const vendor = remainingVendors[i];
-        const distance = locationService.calculateDistance(
-          currentLat,
-          currentLng,
-          vendor.location.coordinates.latitude,
-          vendor.location.coordinates.longitude
-        );
-        
-        if (distance < nearestDistance) {
-          nearestDistance = distance;
-          nearestIndex = i;
-        }
-      }
-      
-      // Add nearest vendor to ordered list
-      const nearestVendor = remainingVendors[nearestIndex];
-      orderedVendors.push(nearestVendor);
-      
-      // Update current position
-      currentLat = nearestVendor.location.coordinates.latitude;
-      currentLng = nearestVendor.location.coordinates.longitude;
-      
-      // Remove from remaining vendors
-      remainingVendors.splice(nearestIndex, 1);
-    }
-    
-    return orderedVendors;
   }
 }
 

@@ -61,7 +61,8 @@ const ActionTypes = {
   SET_THEME: 'SET_THEME',
   SET_NOTIFICATIONS: 'SET_NOTIFICATIONS',
   MARK_VENDOR_CHECKED_IN: 'MARK_VENDOR_CHECKED_IN',
-  SET_CURRENT_VENDOR_INDEX: 'SET_CURRENT_VENDOR_INDEX'
+  SET_CURRENT_VENDOR_INDEX: 'SET_CURRENT_VENDOR_INDEX',
+  UPDATE_USER_LOCATION: 'UPDATE_USER_LOCATION'
 };
 
 // Reducer
@@ -259,6 +260,15 @@ function appReducer(state, action) {
         }
       };
 
+    case ActionTypes.UPDATE_USER_LOCATION:
+      return {
+        ...state,
+        user: {
+          ...state.user,
+          location: action.payload
+        }
+      };
+
     default:
       return state;
   }
@@ -421,6 +431,11 @@ export const AppActions = {
   addRecentVisit: (visit) => ({
     type: ActionTypes.ADD_RECENT_VISIT,
     payload: visit
+  }),
+  
+  updateUserLocation: (location) => ({
+    type: ActionTypes.UPDATE_USER_LOCATION,
+    payload: location
   }),
   
   startJourney: (journeyData) => ({

@@ -1,4 +1,5 @@
-// src/screens/deals/DealSelection.js
+// src/screens/deals/JourneySettings.js
+
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -11,75 +12,88 @@ import {
   Text, 
   Button, 
   Slider, 
-  Icon,
-  Card,
-  Divider
+  Icon
 } from '@rneui/themed';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAppState, AppActions } from '../../context/AppStateContext';
 import routeService from '../../services/RouteService';
 import locationService from '../../services/LocationService';
 import { Logger, LogCategory } from '../../services/LoggingService';
-import redemptionService from '../../services/RedemptionService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Location from 'expo-location';
 
-const DealSelection = ({ navigation }) => {
+const JourneySettings = ({ navigation, route }) => {
   const { state, dispatch } = useAppState();
+  const { dealType = 'birthday' } = route.params || {};
   
   // State variables
-  const [selectedDealType, setSelectedDealType] = useState('daily');
   const [numVendors, setNumVendors] = useState(3);
-  const [maxDistance, setMaxDistance] = useState(20);
+  const [maxDistance, setMaxDistance] = useState(15);
   const [isLoading, setIsLoading] = useState(false);
   const [locationStatus, setLocationStatus] = useState('unknown');
-  const [recentRedemptions, setRecentRedemptions] = useState([]);
   
-  // Get current location and recent redemptions on mount
+  // Get current location on mount
   useEffect(() => {
     getCurrentLocation();
-    loadRecentRedemptions();
   }, []);
   
-  // Function to load recent redemptions for display
-  const loadRecentRedemptions = async () => {
-    try {
-      const redemptions = await redemptionService.getRedemptions();
-      // Get only recent redemptions (last 24 hours)
-      const now = new Date();
-      const recentOnly = redemptions.filter(r => {
-        const timestamp = new Date(r.timestamp);
-        const timeDiff = now - timestamp;
-        const hoursDiff = timeDiff / (1000 * 60 * 60);
-        return hoursDiff < 24;
-      });
-      
-      setRecentRedemptions(recentOnly);
-    } catch (error) {
-      Logger.error(LogCategory.REDEMPTION, 'Failed to load recent redemptions', { error });
-    }
-  };
-  
-  // Get current location
+  // Get current location with better error handling
   const getCurrentLocation = async () => {
     setLocationStatus('requesting');
     try {
-      const location = await locationService.getCurrentLocation();
-      if (location) {
-        dispatch(AppActions.updateUserLocation(location));
-        setLocationStatus('granted');
-      } else {
+      // Request permission first
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      
+      if (status !== 'granted') {
+        Logger.warn(LogCategory.LOCATION, 'Location permission denied by user');
         setLocationStatus('denied');
+        return;
+      }
+      
+      // Try to get current position with a timeout
+      const locationPromise = Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced
+      });
+      
+      // Set a timeout of 10 seconds
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Location request timed out')), 10000);
+      });
+      
+      // Race the location request against the timeout
+      const location = await Promise.race([locationPromise, timeoutPromise]);
+      
+      if (location && location.coords) {
+        const userLocation = {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude
+        };
+        dispatch(AppActions.updateUserLocation(userLocation));
+        setLocationStatus('granted');
+        Logger.info(LogCategory.LOCATION, 'Successfully obtained user location');
+      } else {
+        throw new Error('Invalid location data received');
       }
     } catch (error) {
-      Logger.error(LogCategory.LOCATION, 'Error getting current location', { error });
+      // More detailed error logging
+      Logger.error(LogCategory.LOCATION, 'Error getting current location', { 
+        error: error.message || 'Unknown error',
+        stack: error.stack
+      });
       setLocationStatus('error');
+      
+      // More helpful error message
+      Alert.alert(
+        'Location Error',
+        'We had trouble getting your location. Please check your device settings and try again.',
+        [{ text: 'OK' }]
+      );
     }
   };
   
   // Create a journey route based on selected options
   const handleCreateRoute = async () => {
     // Check location first
-    if (locationStatus !== 'granted' || !state.user.location) {
+    if (locationStatus !== 'granted' || !state.user?.location) {
       Alert.alert(
         'Location Required',
         'We need your location to create an optimized route. Please grant location permission and try again.',
@@ -95,7 +109,7 @@ const DealSelection = ({ navigation }) => {
     try {
       // Create route using the route service
       const routeOptions = {
-        dealType: selectedDealType,
+        dealType: dealType,
         maxVendors: numVendors,
         maxDistance: maxDistance,
         startLocation: state.user.location
@@ -117,7 +131,7 @@ const DealSelection = ({ navigation }) => {
       if (routeResult.vendors.length === 0) {
         Alert.alert(
           'No Vendors Found',
-          'We couldn\'t find any vendors with the selected deal type. Please try a different deal type or increase your search distance.',
+          'We couldn\'t find any vendors with the selected deal type. Please try increasing your search distance.',
           [{ text: 'OK' }]
         );
         setIsLoading(false);
@@ -126,7 +140,7 @@ const DealSelection = ({ navigation }) => {
       
       // Create journey state
       const journeyData = {
-        dealType: selectedDealType,
+        dealType: dealType,
         vendors: routeResult.vendors.map(vendor => ({
           ...vendor,
           checkedIn: false,
@@ -150,12 +164,15 @@ const DealSelection = ({ navigation }) => {
       navigation.navigate('RoutePreview');
       
       Logger.info(LogCategory.JOURNEY, 'Journey started', {
-        dealType: selectedDealType,
+        dealType: dealType,
         vendorCount: routeResult.vendors.length,
         totalDistance: routeResult.totalDistance
       });
     } catch (error) {
-      Logger.error(LogCategory.JOURNEY, 'Error creating journey', { error });
+      Logger.error(LogCategory.JOURNEY, 'Error creating journey', { 
+        error: error.message || 'Unknown error',
+        stack: error.stack
+      });
       Alert.alert(
         'Error',
         'Failed to create your journey. Please try again.',
@@ -165,75 +182,26 @@ const DealSelection = ({ navigation }) => {
       setIsLoading(false);
     }
   };
-  
-  // Render deal type selection buttons
-  const renderDealTypeButtons = () => {
-    const dealTypes = [
-      { key: 'daily', title: 'Daily Deals', icon: 'today' },
-      { key: 'birthday', title: 'Birthday Deals', icon: 'cake' },
-      { key: 'special', title: 'Special Deals', icon: 'stars' }
-    ];
-    
-    return (
-      <View style={styles.dealTypeContainer}>
-        {dealTypes.map(dealType => (
-          <Button
-            key={dealType.key}
-            title={dealType.title}
-            icon={{
-              name: dealType.icon,
-              type: 'material',
-              size: 20,
-              color: selectedDealType === dealType.key ? 'white' : '#4CAF50'
-            }}
-            type={selectedDealType === dealType.key ? 'solid' : 'outline'}
-            buttonStyle={[
-              styles.dealTypeButton,
-              selectedDealType === dealType.key ? styles.selectedDealTypeButton : null
-            ]}
-            containerStyle={styles.dealTypeButtonContainer}
-            titleStyle={selectedDealType === dealType.key ? styles.selectedButtonTitle : styles.buttonTitle}
-            onPress={() => setSelectedDealType(dealType.key)}
-          />
-        ))}
-      </View>
-    );
-  };
-  
-  // Render recent redemptions
-  const renderRecentRedemptions = () => {
-    if (recentRedemptions.length === 0) {
-      return null;
-    }
-    
-    return (
-      <Card containerStyle={styles.recentRedemptionsCard}>
-        <Card.Title>Recent Redemptions (Last 24hrs)</Card.Title>
-        <Card.Divider />
-        {recentRedemptions.map((redemption, index) => (
-          <View key={redemption.id || index} style={styles.redemptionItem}>
-            <Icon name="check-circle" type="material" color="#4CAF50" size={16} />
-            <Text style={styles.redemptionText}>
-              {redemption.dealType.charAt(0).toUpperCase() + redemption.dealType.slice(1)} deal at {redemption.vendorId} 
-              ({new Date(redemption.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})
-            </Text>
-          </View>
-        ))}
-      </Card>
-    );
-  };
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
-        <Text style={styles.header}>Select Your Journey</Text>
+        <Text style={styles.header}>Journey Settings</Text>
         
-        {/* Deal Type Selection */}
-        <Text style={styles.sectionTitle}>What kind of deals are you looking for?</Text>
-        {renderDealTypeButtons()}
-        
-        {/* Recent Redemptions */}
-        {renderRecentRedemptions()}
+        {/* Journey Type Indicator */}
+        <View style={styles.journeyTypeContainer}>
+          <Icon
+            name={dealType === 'birthday' ? 'cake' : 
+                 dealType === 'daily' ? 'today' : 'stars'}
+            type="material"
+            size={32}
+            color="#4CAF50"
+          />
+          <Text style={styles.journeyTypeText}>
+            {dealType === 'birthday' ? 'Birthday Deals' : 
+             dealType === 'daily' ? 'Daily Deals' : 'Special Deals'} Journey
+          </Text>
+        </View>
         
         {/* Number of Vendors */}
         <Text style={styles.sectionTitle}>Number of Dispensaries</Text>
@@ -242,7 +210,7 @@ const DealSelection = ({ navigation }) => {
             value={numVendors}
             onValueChange={value => setNumVendors(value)}
             minimumValue={1}
-            maximumValue={5}
+            maximumValue={10}
             step={1}
             thumbStyle={styles.thumbStyle}
             thumbProps={{
@@ -255,10 +223,10 @@ const DealSelection = ({ navigation }) => {
           />
           <View style={styles.sliderLabels}>
             <Text>1</Text>
-            <Text>2</Text>
             <Text>3</Text>
-            <Text>4</Text>
             <Text>5</Text>
+            <Text>7</Text>
+            <Text>10</Text>
           </View>
         </View>
         
@@ -269,7 +237,7 @@ const DealSelection = ({ navigation }) => {
             value={maxDistance}
             onValueChange={value => setMaxDistance(value)}
             minimumValue={5}
-            maximumValue={50}
+            maximumValue={25}
             step={5}
             thumbStyle={styles.thumbStyle}
             thumbProps={{
@@ -282,10 +250,10 @@ const DealSelection = ({ navigation }) => {
           />
           <View style={styles.sliderLabels}>
             <Text>5</Text>
+            <Text>10</Text>
             <Text>15</Text>
+            <Text>20</Text>
             <Text>25</Text>
-            <Text>35</Text>
-            <Text>50</Text>
           </View>
         </View>
         
@@ -316,12 +284,12 @@ const DealSelection = ({ navigation }) => {
             />
           )}
         </View>
-        
+
         {/* Create Route Button */}
         <Button
-          title="Create Route"
+          title="Start Journey"
           icon={{
-            name: 'route',
+            name: 'directions',
             type: 'material',
             size: 20,
             color: 'white'
@@ -360,35 +328,27 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     color: '#333333',
   },
+  journeyTypeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 32,
+    backgroundColor: '#F5F5F5',
+    padding: 16,
+    borderRadius: 8,
+  },
+  journeyTypeText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginLeft: 12,
+    color: '#333333',
+  },
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     marginTop: 16,
     marginBottom: 8,
     color: '#333333',
-  },
-  dealTypeContainer: {
-    flexDirection: 'column',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  dealTypeButtonContainer: {
-    marginBottom: 8,
-  },
-  dealTypeButton: {
-    borderColor: '#4CAF50',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 12,
-  },
-  selectedDealTypeButton: {
-    backgroundColor: '#4CAF50',
-  },
-  buttonTitle: {
-    color: '#4CAF50',
-  },
-  selectedButtonTitle: {
-    color: 'white',
   },
   sliderContainer: {
     marginBottom: 24,
@@ -449,19 +409,6 @@ const styles = StyleSheet.create({
   loadingIndicator: {
     marginTop: 16,
   },
-  recentRedemptionsCard: {
-    marginBottom: 16,
-    borderRadius: 8,
-  },
-  redemptionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  redemptionText: {
-    marginLeft: 8,
-    fontSize: 14,
-  },
 });
 
-export default DealSelection;
+export default JourneySettings;

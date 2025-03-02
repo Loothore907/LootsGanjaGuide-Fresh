@@ -17,7 +17,41 @@ import {
   Icon,
   Card
 } from '@rneui/themed';
-import { Camera } from 'expo-camera';
+
+// Import the Camera conditionally to avoid crashes if it's not available
+let Camera;
+// Add default Camera Constants to prevent undefined errors
+const CameraConstants = {
+  Type: {
+    back: 1,
+    front: 0
+  },
+  FlashMode: {
+    off: 0,
+    on: 1,
+    auto: 2,
+    torch: 1
+  }
+};
+
+try {
+  Camera = require('expo-camera').Camera;
+  // Only override our constants if the import succeeded
+  if (Camera && Camera.Constants) {
+    CameraConstants.Type = Camera.Constants.Type;
+    CameraConstants.FlashMode = Camera.Constants.FlashMode;
+  }
+} catch (e) {
+  console.warn('Camera import failed:', e);
+  // Create a mock Camera component
+  Camera = ({ children, style, type, flashMode, onBarCodeScanned }) => (
+    <View style={[{ flex: 1, backgroundColor: 'black', justifyContent: 'center', alignItems: 'center' }, style]}>
+      <Text style={{ color: 'white', marginBottom: 20 }}>Camera preview not available</Text>
+      {children}
+    </View>
+  );
+}
+
 import * as Location from 'expo-location';
 import { useAppState, AppActions } from '../../context/AppStateContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -27,6 +61,58 @@ import { checkInAtVendor, getVendorById } from '../../services/MockDataService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import redemptionService from '../../services/RedemptionService';
 import locationService from '../../services/LocationService';
+import { Picker } from '@react-native-picker/picker';
+
+// Add this component inside VendorCheckin.js file, before the main VendorCheckin component
+const MockQRScanner = ({ onScan, onClose }) => {
+  const [vendorId, setVendorId] = useState('v1'); // Default test vendor
+  
+  const handleMockScan = () => {
+    // Simulate a QR code scan with the format "lootsganja://checkin/{vendorId}"
+    onScan({
+      type: 'QR',
+      data: `lootsganja://checkin/${vendorId}`
+    });
+  };
+  
+  return (
+    <View style={styles.mockScannerContainer}>
+      <Text style={styles.mockTitle}>Mock QR Scanner (Dev Only)</Text>
+      
+      <View style={styles.mockInputContainer}>
+        <Text>Select Vendor ID:</Text>
+        <Picker
+          selectedValue={vendorId}
+          onValueChange={(itemValue) => setVendorId(itemValue)}
+          style={styles.vendorPicker}
+        >
+          <Picker.Item label="Green Horizon (v1)" value="v1" />
+          <Picker.Item label="Aurora Dispensary (v2)" value="v2" />
+          <Picker.Item label="Northern Lights (v3)" value="v3" />
+          <Picker.Item label="Denali Dispensary (v4)" value="v4" />
+          <Picker.Item label="Arctic Buds (v5)" value="v5" />
+        </Picker>
+      </View>
+      
+      <Button
+        title="Simulate QR Scan"
+        onPress={handleMockScan}
+        buttonStyle={styles.scanButton}
+      />
+      
+      <Button
+        title="Cancel"
+        type="outline"
+        onPress={onClose}
+        buttonStyle={styles.cancelButton}
+      />
+      
+      <Text style={styles.mockNote}>
+        Mock QR data: lootsganja://checkin/{vendorId}
+      </Text>
+    </View>
+  );
+};
 
 const VendorCheckin = ({ route, navigation }) => {
   const { state, dispatch } = useAppState();
@@ -41,6 +127,7 @@ const VendorCheckin = ({ route, navigation }) => {
   const [userLocation, setUserLocation] = useState(null);
   const [distance, setDistance] = useState(null);
   const [locationVerificationOpen, setLocationVerificationOpen] = useState(false);
+  const [showMockScanner, setShowMockScanner] = useState(false);
   
   // Request camera permissions and check if direct vendor ID was provided
   useEffect(() => {
@@ -52,13 +139,22 @@ const VendorCheckin = ({ route, navigation }) => {
         handleDirectCheckin(vendorId);
       } else {
         try {
-          // Request camera permission
-          const { status } = await Camera.requestCameraPermissionsAsync();
-          if (isMounted) {
-            setHasPermission(status === 'granted');
-          
-            if (status !== 'granted') {
-              Logger.warn(LogCategory.PERMISSIONS, 'Camera permission was denied');
+          // Only request camera permission if Camera is available
+          if (Camera && Camera.requestCameraPermissionsAsync) {
+            // Request camera permission
+            const { status } = await Camera.requestCameraPermissionsAsync();
+            if (isMounted) {
+              setHasPermission(status === 'granted');
+            
+              if (status !== 'granted') {
+                Logger.warn(LogCategory.PERMISSIONS, 'Camera permission was denied');
+              }
+            }
+          } else {
+            // Camera not available, set permission to false
+            if (isMounted) {
+              setHasPermission(false);
+              Logger.warn(LogCategory.PERMISSIONS, 'Camera is not available on this device');
             }
           }
         } catch (error) {
@@ -117,13 +213,33 @@ const VendorCheckin = ({ route, navigation }) => {
       await tryCatch(async () => {
         // Get vendor information
         const vendor = await getVendorById(id);
+        
+        // Check if vendor exists
+        if (!vendor) {
+          throw new Error(`No vendor found with ID: ${id}`);
+        }
+        
+        // Ensure hasQrCode property exists
+        if (vendor.hasQrCode === undefined) {
+          // Default to true for safety if not specified
+          vendor.hasQrCode = true;
+          Logger.warn(LogCategory.VENDOR, 'Vendor missing hasQrCode property, defaulting to true', {
+            vendorId: id,
+            vendorName: vendor.name
+          });
+        }
+        
         setScannedVendor(vendor);
         
         // Get current location after setting vendor
         await getCurrentLocation();
         
         // Process check-in (will happen when user confirms)
-        Logger.info(LogCategory.CHECKIN, 'Direct check-in initiated', { vendorId: id });
+        Logger.info(LogCategory.CHECKIN, 'Direct check-in initiated', { 
+          vendorId: id,
+          vendorName: vendor.name,
+          hasQrCode: vendor.hasQrCode
+        });
       }, LogCategory.CHECKIN, 'getting vendor for direct check-in', true);
     } catch (error) {
       // Error already logged by tryCatch
@@ -225,8 +341,8 @@ const VendorCheckin = ({ route, navigation }) => {
         // Record the deal redemption
         await redemptionService.recordRedemption(
           scannedVendor.id, 
-          state.journey.dealType,
-          `${state.journey.dealType}-${scannedVendor.id}`
+          state.journey?.dealType || 'standard',
+          `${state.journey?.dealType || 'standard'}-${scannedVendor.id}`
         );
         
         // Update points
@@ -235,9 +351,23 @@ const VendorCheckin = ({ route, navigation }) => {
         // Update journey state to mark vendor as checked in
         if (state.journey && state.journey.isActive) {
           const currentVendorIndex = state.journey.currentVendorIndex;
+          // Ensure we're updating the correct vendor in journey
           if (currentVendorIndex >= 0 && currentVendorIndex < state.journey.vendors.length) {
             // Mark the current vendor as checked in with 'qr' type
             dispatch(AppActions.markVendorCheckedIn(currentVendorIndex, 'qr'));
+            
+            // Log for debugging journey state
+            Logger.info(LogCategory.JOURNEY, 'Marked vendor as checked in', {
+              vendorId: scannedVendor.id,
+              journeyIndex: currentVendorIndex,
+              journeyTotalVendors: state.journey.totalVendors,
+              checkInType: 'qr'
+            });
+          } else {
+            Logger.warn(LogCategory.JOURNEY, 'Invalid journey vendor index', {
+              currentVendorIndex,
+              totalVendors: state.journey.totalVendors
+            });
           }
         }
         
@@ -338,6 +468,21 @@ const VendorCheckin = ({ route, navigation }) => {
       const currentIndex = state.journey?.currentVendorIndex || 0;
       const isLastVendor = currentIndex === journeyVendors.length - 1;
       
+      // Count total visited vendors for journey stats
+      let visitedCount = 0;
+      journeyVendors.forEach(vendor => {
+        if (vendor.checkedIn) {
+          visitedCount++;
+        }
+      });
+      
+      Logger.info(LogCategory.JOURNEY, 'Journey progress', {
+        currentIndex,
+        totalVendors: journeyVendors.length,
+        visitedCount,
+        isLastVendor
+      });
+      
       if (isLastVendor) {
         // This is the last vendor, complete the journey
         // Create a complete journey data object to pass
@@ -346,7 +491,8 @@ const VendorCheckin = ({ route, navigation }) => {
           vendors: state.journey.vendors,
           currentVendorIndex: state.journey.currentVendorIndex,
           totalVendors: state.journey.totalVendors,
-          totalDistance: state.route.totalDistance
+          visitedVendors: visitedCount, // Make sure this is accurate
+          totalDistance: state.route?.totalDistance || 0
         };
         
         // Navigate to journey complete with the data
@@ -576,7 +722,7 @@ const VendorCheckin = ({ route, navigation }) => {
             <View style={styles.infoBox}>
               <Icon name="info" type="material" size={20} color="#4CAF50" />
               <Text style={styles.infoText}>
-                We use QR codes to collect valuable data that helps us improve the app! 
+                We use QR codes to collect valuable data that helps us improve the app experience for everyone! 
                 Full points for QR scans, half points for skipping.
               </Text>
             </View>
@@ -646,47 +792,65 @@ const VendorCheckin = ({ route, navigation }) => {
         {showScanner ? (
           // Show QR scanner
           <View style={styles.scannerContainer}>
-            <Camera
-              style={styles.scanner}
-              onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
-              type={1}
-              flashMode={torchOn ? 1 : 0}
-            >
-              <View style={styles.overlay}>
-                <View style={styles.unfilled} />
-                <View style={styles.row}>
+            {typeof Camera === 'function' ? (
+              <Camera
+                style={styles.scanner}
+                onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+                type={CameraConstants.Type.back}
+                flashMode={torchOn ? CameraConstants.FlashMode.torch : CameraConstants.FlashMode.off}
+              >
+                <View style={styles.overlay}>
                   <View style={styles.unfilled} />
-                  <View style={styles.scanner} />
+                  <View style={styles.row}>
+                    <View style={styles.unfilled} />
+                    <View style={styles.scanner} />
+                    <View style={styles.unfilled} />
+                  </View>
                   <View style={styles.unfilled} />
                 </View>
-                <View style={styles.unfilled} />
-              </View>
-              
-              <View style={styles.instructionsContainer}>
-                <Text style={styles.instructionsText}>
-                  Scan the QR code at {scannedVendor.name} to check in
-                </Text>
-              </View>
-              
-              <TouchableOpacity 
-                style={styles.torchButton}
-                onPress={toggleTorch}
-              >
-                <Icon 
-                  name={torchOn ? "flash-on" : "flash-off"} 
-                  type="material" 
-                  color="#FFFFFF" 
-                  size={24} 
+                
+                <View style={styles.instructionsContainer}>
+                  <Text style={styles.instructionsText}>
+                    Scan the QR code at {scannedVendor.name} to check in
+                  </Text>
+                </View>
+                
+                <TouchableOpacity 
+                  style={styles.torchButton}
+                  onPress={toggleTorch}
+                >
+                  <Icon 
+                    name={torchOn ? "flash-on" : "flash-off"} 
+                    type="material" 
+                    color="#FFFFFF" 
+                    size={24} 
+                  />
+                </TouchableOpacity>
+                
+                <Button
+                  title="Cancel"
+                  onPress={() => setShowScanner(false)}
+                  buttonStyle={styles.cancelButton}
+                  containerStyle={styles.cancelButtonContainer}
                 />
-              </TouchableOpacity>
-              
-              <Button
-                title="Cancel"
-                onPress={() => setShowScanner(false)}
-                buttonStyle={styles.cancelButton}
-                containerStyle={styles.cancelButtonContainer}
-              />
-            </Camera>
+              </Camera>
+            ) : (
+              // Fallback when Camera is not a valid component
+              <View style={styles.scanner}>
+                <View style={styles.mockScannerContainer}>
+                  <Text style={styles.mockTitle}>Camera Not Available</Text>
+                  <Text style={styles.cameraPlaceholder}>
+                    Camera functionality is not available on this device or in this environment.
+                  </Text>
+                  <Button
+                    title="Cancel"
+                    onPress={() => setShowScanner(false)}
+                    buttonStyle={styles.cancelButton}
+                    containerStyle={styles.buttonContainer}
+                  />
+                </View>
+              </View>
+            )}
           </View>
         ) : (
           // Show check-in options
@@ -699,29 +863,31 @@ const VendorCheckin = ({ route, navigation }) => {
             <Text style={styles.confirmVendor}>{scannedVendor.name}</Text>
             <Text style={styles.confirmAddress}>{scannedVendor.location.address}</Text>
             
-            {/* Replace the check-in UI with this improved version */}
+            {/* Consistent check-in UI based on vendor QR capabilities */}
             <View style={styles.buttonsContainer}>
-              {/* Option 1: Scan QR for full points */}
-              <Button
-                title="Check In with QR Code"
-                icon={{
-                  name: "qr-code-scanner",
-                  type: "material",
-                  size: 20,
-                  color: "white"
-                }}
-                onPress={() => setShowScanner(true)}
-                buttonStyle={styles.scanQrButton}
-                containerStyle={styles.buttonContainer}
-              />
+              {/* Only show QR option if vendor has QR capabilities */}
+              {scannedVendor.hasQrCode && (
+                <Button
+                  title="Check In with QR Code"
+                  icon={{
+                    name: "qr-code-scanner",
+                    type: "material",
+                    size: 20,
+                    color: "white"
+                  }}
+                  onPress={() => setShowScanner(true)}
+                  buttonStyle={styles.scanQrButton}
+                  containerStyle={styles.buttonContainer}
+                />
+              )}
               
-              {/* Option 2: No QR option (half points if QR is available) */}
+              {/* Option 2: Manual check-in (with penalty message if QR is available) */}
               <Button
                 title={scannedVendor.hasQrCode ? 
                   "Check In without QR (Half Points)" : 
                   "Check In"}
                 icon={{
-                  name: "eco", // Changed from "cannabis" to "eco"
+                  name: "eco",
                   type: "material",
                   size: 20,
                   color: scannedVendor.hasQrCode ? "#666" : "white"
@@ -734,7 +900,7 @@ const VendorCheckin = ({ route, navigation }) => {
               />
             </View>
 
-            {/* Optional message about QR codes if vendor has QR capability */}
+            {/* Only show QR info message if vendor has QR capability */}
             {scannedVendor.hasQrCode && (
               <View style={styles.qrInfoContainer}>
                 <Icon name="emoji-emotions" type="material" color="#4CAF50" size={20} />
@@ -807,69 +973,90 @@ const VendorCheckin = ({ route, navigation }) => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.scannerContainer}>
-        
-        
-      {hasPermission && !scannedVendor && (
-  <View style={styles.scannerContainer}>
-    <Camera
-      style={styles.scanner}
-      onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
-      type={1} // Use direct integer value instead of Constants
-      flashMode={torchOn ? 1 : 0} // Use direct integer values
-    >
-      <View style={styles.overlay}>
-        <View style={styles.unfilled} />
-        <View style={styles.row}>
-          <View style={styles.unfilled} />
-          <View style={styles.scanner} />
-          <View style={styles.unfilled} />
-        </View>
-        <View style={styles.unfilled} />
-      </View>
-      
-      <View style={styles.instructionsContainer}>
-        <Text style={styles.instructionsText}>
-          Scan the QR code at the dispensary to check in
-        </Text>
-      </View>
-      
-      <TouchableOpacity 
-        style={styles.torchButton}
-        onPress={toggleTorch}
-      >
-        <Icon 
-          name={torchOn ? "flash-on" : "flash-off"} 
-          type="material" 
-          color="#FFFFFF" 
-          size={24} 
-        />
-      </TouchableOpacity>
-      
-      {scanned && !isLoading && (
-        <Button
-          title="Tap to Scan Again"
-          onPress={() => setScanned(false)}
-          buttonStyle={styles.scanAgainButton}
-          containerStyle={styles.scanAgainButtonContainer}
-        />
-      )}
-      
-      {isLoading && (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color="#FFFFFF" />
-          <Text style={styles.loadingText}>Processing...</Text>
-        </View>
-      )}
-      
-      <Button
-        title="Cancel"
-        onPress={handleCancel}
-        buttonStyle={styles.cancelButton}
-        containerStyle={styles.cancelButtonContainer}
-      />
-    </Camera>
-  </View>
-)}
+        {hasPermission && !scannedVendor && (
+          <View style={styles.scannerContainer}>
+            {__DEV__ || !Camera ? (
+              // Development mockup or fallback if Camera is not available
+              <View style={styles.mockScannerContainer}>
+                <Text style={styles.mockTitle}>QR Scanner (Dev Mode)</Text>
+                
+                <Button
+                  title="Simulate Scan for vendor 1"
+                  onPress={() => handleBarCodeScanned({ 
+                    type: 'QR', 
+                    data: 'lootsganja://checkin/v1' 
+                  })}
+                  buttonStyle={styles.scanButton}
+                  containerStyle={styles.buttonContainer}
+                />
+                
+                <Button
+                  title="Simulate Scan for vendor 2"
+                  onPress={() => handleBarCodeScanned({ 
+                    type: 'QR', 
+                    data: 'lootsganja://checkin/v2' 
+                  })}
+                  buttonStyle={styles.scanButton}
+                  containerStyle={styles.buttonContainer}
+                />
+                
+                <Button
+                  title="Cancel"
+                  type="outline"
+                  onPress={handleCancel}
+                  containerStyle={styles.buttonContainer}
+                />
+              </View>
+            ) : (
+              // Production camera implementation using our safe CameraConstants
+              <View style={styles.scanner}>
+                {/* This is a safer way to render the Camera */}
+                <Camera
+                  style={StyleSheet.absoluteFill}
+                  onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+                  // Use our safe CameraConstants instead of direct Camera.Constants
+                  type={CameraConstants.Type.back}
+                  flashMode={torchOn ? CameraConstants.FlashMode.torch : CameraConstants.FlashMode.off}
+                >
+                  <View style={styles.overlay}>
+                    <View style={styles.unfilled} />
+                    <View style={styles.row}>
+                      <View style={styles.unfilled} />
+                      <View style={styles.scanner} />
+                      <View style={styles.unfilled} />
+                    </View>
+                    <View style={styles.unfilled} />
+                  </View>
+                  
+                  <View style={styles.instructionsContainer}>
+                    <Text style={styles.instructionsText}>
+                      Scan the QR code at the dispensary to check in
+                    </Text>
+                  </View>
+                  
+                  <TouchableOpacity 
+                    style={styles.torchButton}
+                    onPress={toggleTorch}
+                  >
+                    <Icon 
+                      name={torchOn ? "flash-on" : "flash-off"} 
+                      type="material" 
+                      color="#FFFFFF" 
+                      size={24} 
+                    />
+                  </TouchableOpacity>
+                  
+                  <Button
+                    title="Cancel"
+                    onPress={handleCancel}
+                    buttonStyle={styles.cancelButton}
+                    containerStyle={styles.cancelButtonContainer}
+                  />
+                </Camera>
+              </View>
+            )}
+          </View>
+        )}
       </View>
     </SafeAreaView>
   );
@@ -898,7 +1085,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#4CAF50',
   },
   buttonContainer: {
-    width: '100%', // Full width for each button
+    width: '80%',
+    marginBottom: 20,
   },
   scannerContainer: {
     flex: 1,
@@ -1136,76 +1324,61 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     gap: 15, // Adds space between buttons
   },
-  scanQrButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
-    paddingVertical: 12,
-  },
-  skipQrButton: {
-    borderColor: '#666',
-    borderRadius: 8,
-    paddingVertical: 12,
-  },
-  confirmButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
-    paddingVertical: 12,
-  },
-  qrInfoContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#F1F8E9',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 16,
-    width: '80%',
-    alignItems: 'flex-start',
-  },
-  qrInfoText: {
-    flex: 1,
-    marginLeft: 8,
-    fontSize: 14,
-    color: '#4CAF50',
-    lineHeight: 20,
-  },
-  modalOverlay: {
-    flex: 1,
+  devModeButton: {
+    position: 'absolute',
+    top: 80,
+    left: 20,
     backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 30,
+    width: 50,
+    height: 50,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalCard: {
-    width: '85%',
-    borderRadius: 10,
+  mockScannerContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+    justifyContent: 'center',
+    alignItems: 'center',
     padding: 20,
-    margin: 0,
   },
-  modalIcon: {
-    alignSelf: 'center',
-    marginBottom: 10,
-  },
-  modalTitle: {
-    fontSize: 18,
+  mockTitle: {
+    fontSize: 24,
+    color: '#FFFFFF',
     fontWeight: 'bold',
-    textAlign: 'center',
+    marginBottom: 30,
   },
-  modalText: {
+  scanButton: {
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 40,
+  },
+  cameraPlaceholder: {
+    fontSize: 16,
+    color: '#FFFFFF',
     textAlign: 'center',
     marginBottom: 20,
-    fontSize: 16,
-    lineHeight: 22,
   },
-  modalButtonsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  modalButtonContainer: {
-    width: '48%',
-  },
-  modalCancelButton: {
-    borderColor: '#999',
-  },
-  modalConfirmButton: {
+  simulateScanButton: {
     backgroundColor: '#4CAF50',
+    marginBottom: 10,
+  },
+  mockInputContainer: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    padding: 15,
+    borderRadius: 8,
+    width: '100%',
+    marginBottom: 20,
+  },
+  vendorPicker: {
+    height: 50,
+    width: '100%',
+    color: 'white',
+    marginTop: 10,
+  },
+  mockNote: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 14,
+    marginTop: 20,
   },
 });
 
