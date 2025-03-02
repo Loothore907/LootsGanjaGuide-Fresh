@@ -200,6 +200,110 @@ class RedemptionService {
       return false;
     }
   }
+
+  /**
+   * Get statistics on redemption activity
+   * @returns {Object} Stats on redemption activity
+   */
+  async getRedemptionStats() {
+    try {
+      const redemptions = await this.getRedemptions();
+      const now = new Date();
+      
+      // Get current day boundaries
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const todayEnd = todayStart + 24 * 60 * 60 * 1000;
+      
+      // Get current week boundaries
+      const dayOfWeek = now.getDay();
+      const weekStart = new Date(todayStart - dayOfWeek * 24 * 60 * 60 * 1000).getTime();
+      const weekEnd = weekStart + 7 * 24 * 60 * 60 * 1000;
+      
+      // Get current month boundaries
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).getTime() + 24 * 60 * 60 * 1000;
+      
+      // Filter redemptions by time periods
+      const todayRedemptions = redemptions.filter(r => {
+        const timestamp = new Date(r.timestamp).getTime();
+        return timestamp >= todayStart && timestamp < todayEnd;
+      });
+      
+      const weekRedemptions = redemptions.filter(r => {
+        const timestamp = new Date(r.timestamp).getTime();
+        return timestamp >= weekStart && timestamp < weekEnd;
+      });
+      
+      const monthRedemptions = redemptions.filter(r => {
+        const timestamp = new Date(r.timestamp).getTime();
+        return timestamp >= monthStart && timestamp < monthEnd;
+      });
+      
+      // Calculate unique vendors for each period
+      const getUniqueVendors = (redeemList) => {
+        return new Set(redeemList.map(r => r.vendorId)).size;
+      };
+      
+      return {
+        today: {
+          count: todayRedemptions.length,
+          uniqueVendors: getUniqueVendors(todayRedemptions)
+        },
+        week: {
+          count: weekRedemptions.length,
+          uniqueVendors: getUniqueVendors(weekRedemptions)
+        },
+        month: {
+          count: monthRedemptions.length,
+          uniqueVendors: getUniqueVendors(monthRedemptions)
+        },
+        total: {
+          count: redemptions.length,
+          uniqueVendors: getUniqueVendors(redemptions)
+        }
+      };
+    } catch (error) {
+      Logger.error(LogCategory.REDEMPTION, 'Error generating redemption stats', { error });
+      // Return empty stats if there's an error
+      return {
+        today: { count: 0, uniqueVendors: 0 },
+        week: { count: 0, uniqueVendors: 0 },
+        month: { count: 0, uniqueVendors: 0 },
+        total: { count: 0, uniqueVendors: 0 }
+      };
+    }
+  }
+
+  /**
+   * Check if a deal has been redeemed today
+   * @param {string} vendorId - ID of the vendor
+   * @param {string} dealType - Type of deal
+   * @returns {Promise<boolean>} - Whether deal was redeemed today
+   */
+  async hasRedeemedToday(vendorId, dealType) {
+    try {
+      // Get all redemptions
+      const redemptions = await this.getRedemptions();
+      
+      // Get today's date boundaries
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const todayEnd = todayStart + 24 * 60 * 60 * 1000;
+      
+      // Find any redemptions for this vendor and deal type today
+      const todayRedemptions = redemptions.filter(r => {
+        if (r.vendorId !== vendorId || r.dealType !== dealType) return false;
+        
+        const timestamp = new Date(r.timestamp).getTime();
+        return timestamp >= todayStart && timestamp < todayEnd;
+      });
+      
+      return todayRedemptions.length > 0;
+    } catch (error) {
+      Logger.error(LogCategory.REDEMPTION, 'Error checking for today\'s redemptions', { error });
+      return false; // Default to not redeemed in case of error
+    }
+  }
 }
 
 // Create and export a singleton instance
