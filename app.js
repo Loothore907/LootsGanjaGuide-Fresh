@@ -44,6 +44,8 @@ import { handleError, tryCatch } from './src/utils/ErrorHandler';
 
 // Developer Tools (only loaded in development)
 import DevTools from './src/components/DevTools';
+// At the top of app.js
+import { app } from './src/config/firebase';
 
 // Create navigators
 const Stack = createStackNavigator();
