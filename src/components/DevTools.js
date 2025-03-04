@@ -1,223 +1,299 @@
 // src/components/DevTools.js
-import React, { useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Modal, Text } from 'react-native';
-import { Button, Icon } from '@rneui/themed';
+import React, { useState, useEffect } from 'react';
+import { View, Text, Switch, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { Icon } from '@rneui/themed';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
 import { Logger, LogCategory } from '../services/LoggingService';
+import { tryCatch } from '../utils/ErrorHandler';
+import serviceProvider from '../services/ServiceProvider';
+import appInitializer from '../utils/AppInitializer';
+import firebaseMigration from '../utils/FirebaseMigration';
 
 /**
- * DevTools component - only rendered in __DEV__ mode
- * Provides quick navigation and testing shortcuts
+ * Developer tools component for testing and debugging
+ * Only shown in development mode
  */
 const DevTools = () => {
-  const [modalVisible, setModalVisible] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
+  const [useFirebase, setUseFirebase] = useState(false);
+  const [userDataExists, setUserDataExists] = useState(false);
+  const [migrationCompleted, setMigrationCompleted] = useState(false);
   const navigation = useNavigation();
 
-  // Reset navigation to a specific screen
-  const resetToScreen = (screenName) => {
-    navigation.reset({
-      index: 0,
-      routes: [{ name: screenName }],
-    });
-    setModalVisible(false);
-    Logger.debug(LogCategory.GENERAL, `DevTools: Reset to ${screenName}`);
+  // Load initial state
+  useEffect(() => {
+    const loadDevToolsState = async () => {
+      await tryCatch(async () => {
+        // Load Firebase setting
+        const firebaseSetting = await AsyncStorage.getItem('use_firebase');
+        setUseFirebase(firebaseSetting === 'true');
+        
+        // Check if any user data exists
+        const ageVerified = await AsyncStorage.getItem('isAgeVerified');
+        const tosAccepted = await AsyncStorage.getItem('tosAccepted');
+        const username = await AsyncStorage.getItem('username');
+        
+        setUserDataExists(!!(ageVerified || tosAccepted || username));
+        
+        // Check migration status
+        const migrationStatus = await AsyncStorage.getItem('firebase_migration_completed');
+        setMigrationCompleted(migrationStatus === 'true');
+      }, LogCategory.GENERAL, 'loading dev tools state', false);
+    };
+    
+    loadDevToolsState();
+  }, []);
+
+  // Toggle Firebase/Mock data
+  const toggleFirebase = async (value) => {
+    try {
+      await appInitializer.toggleDataSource(value);
+      setUseFirebase(value);
+    } catch (error) {
+      Logger.error(LogCategory.GENERAL, 'Error toggling data source', { error });
+    }
   };
 
-  // Clear all user authentication data
-  const clearAuthData = async () => {
+  // Run Firebase migration
+  const runMigration = async () => {
+    try {
+      const result = await firebaseMigration.migrateAllData();
+      if (result.success) {
+        await AsyncStorage.setItem('firebase_migration_completed', 'true');
+        setMigrationCompleted(true);
+        Logger.info(LogCategory.DATABASE, 'Firebase migration completed', { result });
+        alert('Migration completed successfully!');
+      } else {
+        Logger.warn(LogCategory.DATABASE, 'Firebase migration issues', { result });
+        alert(`Migration completed with issues: ${result.vendors.message}`);
+      }
+    } catch (error) {
+      Logger.error(LogCategory.DATABASE, 'Error running migration', { error });
+      alert(`Migration failed: ${error.message}`);
+    }
+  };
+
+  // Reset user data
+  const resetUserData = async () => {
     try {
       await AsyncStorage.multiRemove([
-        'isAgeVerified',
-        'tosAccepted',
+        'isAgeVerified', 
+        'tosAccepted', 
         'username',
-        'ageVerificationDate',
-        'tosAcceptedDate',
+        'points',
+        'favorites',
+        'recentVisits',
+        'checkin_history',
+        'current_journey',
+        'current_route_data',
+        'journey_history'
       ]);
       
-      Logger.debug(LogCategory.GENERAL, 'DevTools: Cleared auth data');
+      setUserDataExists(false);
+      Logger.info(LogCategory.AUTH, 'User data reset by developer');
       
-      // Reset to initial screen
-      resetToScreen('AgeVerification');
+      // Navigate back to age verification
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'AgeVerification' }],
+      });
+      
+      alert('User data reset complete');
     } catch (error) {
-      console.error('Failed to clear auth data:', error);
+      Logger.error(LogCategory.STORAGE, 'Error resetting user data', { error });
+      alert('Error resetting user data');
     }
   };
 
-  // Clear all storage (more aggressive)
-  const clearAllStorage = async () => {
+  // Reset migration status
+  const resetMigrationStatus = async () => {
     try {
-      const keys = await AsyncStorage.getAllKeys();
-      await AsyncStorage.multiRemove(keys);
-      
-      Logger.debug(LogCategory.GENERAL, 'DevTools: Cleared all storage');
-      
-      // Reset to initial screen
-      resetToScreen('AgeVerification');
+      await AsyncStorage.removeItem('firebase_migration_completed');
+      setMigrationCompleted(false);
+      Logger.info(LogCategory.DATABASE, 'Migration status reset by developer');
+      alert('Migration status reset');
     } catch (error) {
-      console.error('Failed to clear storage:', error);
+      Logger.error(LogCategory.STORAGE, 'Error resetting migration status', { error });
+      alert('Error resetting migration status');
     }
   };
 
-  if (!__DEV__) return null;
+  if (!isVisible) {
+    return (
+      <TouchableOpacity 
+        style={styles.fab} 
+        onPress={() => setIsVisible(true)}
+      >
+        <Text style={styles.fabIcon}>DEV</Text>
+      </TouchableOpacity>
+    );
+  }
 
   return (
-    <>
-      <TouchableOpacity
-        style={styles.floatingButton}
-        onPress={() => setModalVisible(true)}
-      >
-        <Icon name="developer-mode" type="material" color="#FFFFFF" size={24} />
-      </TouchableOpacity>
-
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Developer Tools</Text>
-            
-            <Text style={styles.sectionTitle}>Navigation</Text>
-            <View style={styles.buttonGrid}>
-              <Button
-                title="Age Verification"
-                onPress={() => resetToScreen('AgeVerification')}
-                buttonStyle={styles.button}
-                titleStyle={styles.buttonText}
-              />
-              <Button
-                title="Terms of Service"
-                onPress={() => resetToScreen('TermsOfService')}
-                buttonStyle={styles.button}
-                titleStyle={styles.buttonText}
-              />
-              <Button
-                title="Username Setup"
-                onPress={() => resetToScreen('UserSetup')}
-                buttonStyle={styles.button}
-                titleStyle={styles.buttonText}
-              />
-              <Button
-                title="Return User Check"
-                onPress={() => resetToScreen('ReturnUserVerification')}
-                buttonStyle={styles.button}
-                titleStyle={styles.buttonText}
-              />
-              <Button
-                title="Dashboard"
-                onPress={() => resetToScreen('MainTabs')}
-                buttonStyle={styles.button}
-                titleStyle={styles.buttonText}
-              />
-            </View>
-            
-            <Text style={styles.sectionTitle}>Storage</Text>
-            <View style={styles.buttonRow}>
-              <Button
-                title="Clear Auth Data"
-                onPress={clearAuthData}
-                buttonStyle={[styles.button, styles.warningButton]}
-                titleStyle={styles.buttonText}
-              />
-              <Button
-                title="Clear All Storage"
-                onPress={clearAllStorage}
-                buttonStyle={[styles.button, styles.dangerButton]}
-                titleStyle={styles.buttonText}
-              />
-            </View>
-
-            <Button
-              title="Close"
-              onPress={() => setModalVisible(false)}
-              buttonStyle={styles.closeButton}
-              containerStyle={styles.closeButtonContainer}
-            />
-          </View>
+    <View style={styles.overlay}>
+      <View style={styles.panel}>
+        <View style={styles.headerContainer}>
+          <Text style={styles.header}>Developer Tools</Text>
+          <TouchableOpacity onPress={() => setIsVisible(false)}>
+            <Icon name="close" type="material" size={24} />
+          </TouchableOpacity>
         </View>
-      </Modal>
-    </>
+        
+        <ScrollView>
+          {/* Data Source */}
+          <View style={styles.section}>
+            <Text style={styles.sectionHeader}>Data Source</Text>
+            <View style={styles.toggleRow}>
+              <Text style={styles.toggleLabel}>Use Firebase</Text>
+              <Switch
+                value={useFirebase}
+                onValueChange={toggleFirebase}
+                trackColor={{ false: "#767577", true: "#4CAF50" }}
+              />
+            </View>
+            <Text style={styles.helpText}>
+              {useFirebase ? 'Using Firebase data' : 'Using mock data'}
+            </Text>
+          </View>
+          
+          {/* Firebase Migration */}
+          <View style={styles.section}>
+            <Text style={styles.sectionHeader}>Firebase Migration</Text>
+            <View style={styles.buttonRow}>
+              <TouchableOpacity 
+                style={[styles.button, migrationCompleted && styles.disabledButton]} 
+                onPress={runMigration}
+                disabled={migrationCompleted}
+              >
+                <Text style={styles.buttonText}>Migrate Data</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.button, !migrationCompleted && styles.disabledButton]}
+                onPress={resetMigrationStatus}
+                disabled={!migrationCompleted}
+              >
+                <Text style={styles.buttonText}>Reset Status</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.helpText}>
+              {migrationCompleted ? 'Migration completed' : 'Migration not yet run'}
+            </Text>
+          </View>
+          
+          {/* User Data */}
+          <View style={styles.section}>
+            <Text style={styles.sectionHeader}>User Data</Text>
+            <View style={styles.buttonRow}>
+              <TouchableOpacity 
+                style={[styles.button, styles.warningButton, !userDataExists && styles.disabledButton]} 
+                onPress={resetUserData}
+                disabled={!userDataExists}
+              >
+                <Text style={styles.buttonText}>Reset User Data</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.helpText}>
+              {userDataExists ? 'User data exists' : 'No user data found'}
+            </Text>
+          </View>
+        </ScrollView>
+      </View>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  floatingButton: {
+  fab: {
     position: 'absolute',
+    bottom: 20,
     right: 20,
-    bottom: 80,
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: '#4CAF50',
+    backgroundColor: '#F44336',
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 5,
+    elevation: 4,
     zIndex: 1000,
   },
-  modalOverlay: {
-    flex: 1,
+  fabIcon: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 1000,
   },
-  modalContent: {
+  panel: {
     width: '80%',
+    maxHeight: '80%',
     backgroundColor: 'white',
     borderRadius: 10,
     padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
     elevation: 5,
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+  headerContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 20,
-    textAlign: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 10,
   },
-  sectionTitle: {
-    fontSize: 16,
+  header: {
+    fontSize: 18,
     fontWeight: 'bold',
-    marginTop: 10,
+  },
+  section: {
+    marginBottom: 20,
+  },
+  sectionHeader: {
+    fontSize: 16,
+    fontWeight: '600',
     marginBottom: 10,
   },
-  buttonGrid: {
+  toggleRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: 15,
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+  toggleLabel: {
+    fontSize: 14,
+  },
+  helpText: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
   },
   buttonRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 15,
+    marginBottom: 5,
   },
   button: {
-    backgroundColor: '#4CAF50',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    margin: 5,
-    minWidth: '45%',
+    backgroundColor: '#2196F3',
+    padding: 10,
+    borderRadius: 5,
+    flex: 1,
+    marginHorizontal: 5,
+    alignItems: 'center',
   },
   warningButton: {
-    backgroundColor: '#FF9800',
-  },
-  dangerButton: {
     backgroundColor: '#F44336',
   },
+  disabledButton: {
+    backgroundColor: '#CCCCCC',
+  },
   buttonText: {
-    fontSize: 12,
-  },
-  closeButtonContainer: {
-    marginTop: 10,
-  },
-  closeButton: {
-    backgroundColor: '#2196F3',
+    color: 'white',
+    fontWeight: '500',
   },
 });
 

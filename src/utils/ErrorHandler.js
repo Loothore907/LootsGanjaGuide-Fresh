@@ -28,74 +28,95 @@ export class AppError extends Error {
 }
 
 /**
- * Handle an error appropriately based on its type
- * @param {Error} error - The error to handle
- * @param {LogCategory} category - The category for logging
- * @param {string} context - Description of where/when the error occurred
- * @param {boolean} showAlert - Whether to show an alert to the user
- * @param {Function} [callback] - Optional callback after error is handled
+ * Utility for handling errors consistently throughout the app
+ * 
+ * @param {Function} fn - The async function to execute
+ * @param {LogCategory} category - The logging category
+ * @param {string} action - Description of the action being performed
+ * @param {any} defaultValue - Default value to return on error
+ * @returns {Promise<any>} - The result of the function or defaultValue on error
  */
-export const handleError = (error, category, context, showAlert = true, callback = null) => {
-  // Determine error type
-  const errorType = error instanceof AppError ? error.type : ErrorType.UNEXPECTED;
-  
-  // Log the error
-  Logger.error(category, `Error in ${context}: ${error.message}`, {
-    type: errorType,
-    stack: error.stack,
-    metadata: error instanceof AppError ? error.metadata : {}
-  });
-
-  // Prepare user-friendly message
-  let userMessage;
-  switch (errorType) {
-    case ErrorType.NETWORK:
-      userMessage = 'Network connection issue. Please check your internet connection and try again.';
-      break;
-    case ErrorType.STORAGE:
-      userMessage = 'Unable to access local storage. Please restart the app and try again.';
-      break;
-    case ErrorType.VALIDATION:
-      userMessage = error.message || 'Invalid data. Please check your input and try again.';
-      break;
-    case ErrorType.PERMISSION:
-      userMessage = 'Permission denied. Please grant the required permissions in your device settings.';
-      break;
-    case ErrorType.AUTH:
-      userMessage = 'Authentication error. Please try again.';
-      break;
-    default:
-      userMessage = 'Something went wrong. Please try again later.';
-  }
-
-  // Show alert if requested
-  if (showAlert) {
-    Alert.alert('Error', userMessage, [{ text: 'OK' }]);
-  }
-
-  // Execute callback if provided
-  if (callback && typeof callback === 'function') {
-    callback(error);
-  }
-
-  return userMessage;
-};
-
-/**
- * Try to execute a function and handle any errors
- * @param {Function} fn - Function to execute
- * @param {LogCategory} category - Category for logging
- * @param {string} context - Description of operation
- * @param {boolean} showAlert - Whether to show alerts
- * @returns {Promise} - Resolves with function result or rejects with handled error
- */
-export const tryCatch = async (fn, category, context, showAlert = true) => {
+export const tryCatch = async (fn, category, action, defaultValue = null) => {
   try {
     return await fn();
   } catch (error) {
-    handleError(error, category, context, showAlert);
-    throw error; // Re-throw so caller can handle if needed
+    Logger.error(
+      category || LogCategory.GENERAL,
+      `Error ${action || 'performing operation'}`,
+      { error }
+    );
+    return defaultValue;
   }
+};
+
+/**
+ * Format an error for display to the user
+ * 
+ * @param {Error} error - The error to format
+ * @returns {string} - User-friendly error message
+ */
+export const formatError = (error) => {
+  if (!error) return 'An unknown error occurred';
+  
+  // Firebase auth errors
+  if (error.code) {
+    switch (error.code) {
+      case 'auth/invalid-email':
+        return 'The email address is not valid.';
+      case 'auth/user-disabled':
+        return 'This user account has been disabled.';
+      case 'auth/user-not-found':
+        return 'No user found with this email address.';
+      case 'auth/wrong-password':
+        return 'Incorrect password.';
+      case 'auth/email-already-in-use':
+        return 'This email is already in use.';
+      case 'auth/weak-password':
+        return 'The password is too weak.';
+      case 'auth/operation-not-allowed':
+        return 'This operation is not allowed.';
+      case 'auth/network-request-failed':
+        return 'Network error. Please check your connection.';
+      case 'permission-denied':
+        return 'You do not have permission to perform this action.';
+      default:
+        if (error.code.startsWith('auth/')) {
+          return 'Authentication error: ' + error.message;
+        }
+    }
+  }
+  
+  // Network errors
+  if (error.message && error.message.includes('Network Error')) {
+    return 'Network error. Please check your connection and try again.';
+  }
+  
+  // Default error message
+  return error.message || 'An unexpected error occurred. Please try again.';
+};
+
+/**
+ * Handle an error with logging and optional alert
+ * 
+ * @param {Error} error - The error to handle
+ * @param {LogCategory} category - The logging category
+ * @param {string} action - Description of the action being performed
+ * @param {boolean} showAlert - Whether to show an alert to the user
+ */
+export const handleError = (error, category, action, showAlert = false) => {
+  Logger.error(category || LogCategory.GENERAL, `Error ${action || 'occurred'}`, { error });
+  
+  if (showAlert && typeof alert === 'function') {
+    alert(formatError(error));
+  }
+  
+  return formatError(error);
+};
+
+export default {
+  tryCatch,
+  formatError,
+  handleError
 };
 
 /**

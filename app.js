@@ -7,6 +7,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Icon } from '@rneui/themed';
 
+// Firebase initialization
+import appInitializer from './src/utils/AppInitializer';
+
 // Initialize logging service
 import { Logger, LogCategory } from './src/services/LoggingService';
 
@@ -44,8 +47,6 @@ import { handleError, tryCatch } from './src/utils/ErrorHandler';
 
 // Developer Tools (only loaded in development)
 import DevTools from './src/components/DevTools';
-// At the top of app.js
-import { app } from './src/config/firebase';
 
 // Create navigators
 const Stack = createStackNavigator();
@@ -91,14 +92,23 @@ const AppContent = () => {
   const [hasUsername, setHasUsername] = useState(false);
   const [username, setUsername] = useState(null);
   const [isReturningUser, setIsReturningUser] = useState(false);
+  const [authUser, setAuthUser] = useState(null);
 
-  // Initialize logging and check for user status
+  // Initialize app and check for user status
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        // Initialize logging service
-        await Logger.initialize();
-        Logger.info(LogCategory.GENERAL, 'App initializing');
+        // Initialize Firebase and services
+        const initResult = await appInitializer.initialize({
+          useFirebase: __DEV__ ? false : true, // Use mock data in dev, Firebase in prod by default
+          migrateData: __DEV__, // Only attempt migration in dev mode
+          onAuthChange: (user) => {
+            // Update auth state when Firebase auth changes
+            setAuthUser(user);
+          }
+        });
+        
+        Logger.info(LogCategory.GENERAL, 'App initialization complete', { success: initResult });
         
         await tryCatch(async () => {
           // Check for existing user setup
@@ -132,12 +142,18 @@ const AppContent = () => {
       } catch (error) {
         // Error is already logged by tryCatch
         // We'll continue initialization with default values
+        Logger.error(LogCategory.GENERAL, 'App initialization error', { error });
       } finally {
         setIsInitialized(true);
       }
     };
     
     initializeApp();
+    
+    // Clean up on unmount
+    return () => {
+      appInitializer.cleanup();
+    };
   }, []);
 
   // Don't render anything until we've checked if the user is setup
