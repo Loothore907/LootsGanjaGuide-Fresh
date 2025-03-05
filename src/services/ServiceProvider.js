@@ -23,6 +23,22 @@ class ServiceProvider {
   }
   
   /**
+   * Initialize the service provider
+   * @param {boolean} useFirebase - Whether to use Firebase
+   * @returns {Promise<void>}
+   */
+  async initialize(useFirebase) {
+    this.setUseFirebase(useFirebase);
+    
+    // Initialize Firebase adapter if using Firebase
+    if (useFirebase && firebaseServiceAdapter.initialize) {
+      await firebaseServiceAdapter.initialize();
+    }
+    
+    Logger.info(LogCategory.GENERAL, 'Service provider initialization complete');
+  }
+  
+  /**
    * Set whether to use Firebase or mock data
    * @param {boolean} useFirebase - Whether to use Firebase
    */
@@ -33,6 +49,46 @@ class ServiceProvider {
     // Clear any cached services/repositories so they'll be re-created with the new setting
     this.services = {};
     this.repositories = {};
+  }
+  
+  /**
+   * Get featured deals
+   * @param {Object} options - Options for fetching deals
+   * @returns {Promise<Array>} Featured deals
+   */
+  async getFeaturedDeals(options = {}) {
+    try {
+      Logger.info(LogCategory.DEALS, 'Getting featured deals', { options });
+      
+      if (this.useFirebase) {
+        return await firebaseServiceAdapter.getFeaturedDeals(options);
+      } else {
+        return await MockDataService.getFeaturedDeals(options);
+      }
+    } catch (error) {
+      Logger.error(LogCategory.DEALS, 'Error getting featured deals', { error });
+      return [];
+    }
+  }
+  
+  /**
+   * Get all vendors
+   * @param {Object} options - Options for fetching vendors
+   * @returns {Promise<Array>} Vendors
+   */
+  async getAllVendors(options = {}) {
+    try {
+      Logger.info(LogCategory.VENDORS, 'Getting all vendors', { options });
+      
+      if (this.useFirebase) {
+        return await firebaseServiceAdapter.getAllVendors(options);
+      } else {
+        return await MockDataService.getAllVendors(options);
+      }
+    } catch (error) {
+      Logger.error(LogCategory.VENDORS, 'Error getting all vendors', { error });
+      return [];
+    }
   }
   
   /**

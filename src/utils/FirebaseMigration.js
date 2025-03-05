@@ -4,6 +4,8 @@ import { firestore } from '../config/firebase';
 import { collection, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { Logger, LogCategory } from '../services/LoggingService';
 import { tryCatch } from './ErrorHandler';
+import { auth } from '../config/firebase';
+import { signInAnonymously } from 'firebase/auth';
 
 /**
  * Handles migration of local data to Firebase
@@ -25,6 +27,22 @@ class FirebaseMigration {
     };
     
     try {
+      // First, try to authenticate anonymously with Firebase
+      try {
+        Logger.info(LogCategory.AUTH, 'Attempting anonymous authentication for migration');
+        await signInAnonymously(auth);
+        Logger.info(LogCategory.AUTH, 'Anonymous authentication successful');
+      } catch (authError) {
+        Logger.error(LogCategory.AUTH, 'Failed to authenticate anonymously', { error: authError });
+        results.success = false;
+        results.user = { 
+          success: false, 
+          message: 'Failed to authenticate with Firebase. Migration requires authentication.',
+          error: authError
+        };
+        return results;
+      }
+      
       // Get user ID or create one
       const userId = await this.getUserId();
       
@@ -65,10 +83,17 @@ class FirebaseMigration {
       let userId = await AsyncStorage.getItem('firebase_user_id');
       
       if (!userId) {
-        // Generate a new user ID (in a real app, this would come from Firebase Auth)
-        userId = 'user_' + Math.random().toString(36).substring(2, 15);
+        // Use Firebase Auth user ID if available
+        if (auth.currentUser) {
+          userId = auth.currentUser.uid;
+          Logger.info(LogCategory.AUTH, 'Using Firebase Auth user ID', { userId });
+        } else {
+          // Fallback to generating a random ID (should not happen if auth was successful)
+          userId = 'user_' + Math.random().toString(36).substring(2, 15);
+          Logger.info(LogCategory.AUTH, 'Generated fallback user ID', { userId });
+        }
+        
         await AsyncStorage.setItem('firebase_user_id', userId);
-        Logger.info(LogCategory.AUTH, 'Created new Firebase user ID', { userId });
       }
       
       return userId;
@@ -82,24 +107,39 @@ class FirebaseMigration {
    */
   async migrateUserProfile(userId) {
     return await tryCatch(async () => {
-      // Get user data from AsyncStorage
-      const username = await AsyncStorage.getItem('username') || 'Anonymous';
-      const ageVerified = await AsyncStorage.getItem('isAgeVerified') === 'true';
-      const tosAccepted = await AsyncStorage.getItem('tosAccepted') === 'true';
-      const points = parseInt(await AsyncStorage.getItem('points') || '0', 10);
-      
-      // Create user document in Firestore
-      const userRef = doc(firestore, 'users', userId);
-      await setDoc(userRef, {
-        username,
-        ageVerified,
-        tosAccepted,
-        points,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      
-      return { success: true, message: 'User profile migrated successfully' };
+      try {
+        // Get user data from AsyncStorage
+        const username = await AsyncStorage.getItem('username') || 'Anonymous';
+        const ageVerified = await AsyncStorage.getItem('isAgeVerified') === 'true';
+        const tosAccepted = await AsyncStorage.getItem('tosAccepted') === 'true';
+        const points = parseInt(await AsyncStorage.getItem('points') || '0', 10);
+        
+        // Create user document in Firestore
+        const userRef = doc(firestore, 'users', userId);
+        await setDoc(userRef, {
+          username,
+          ageVerified,
+          tosAccepted,
+          points,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+        
+        return { success: true, message: 'User profile migrated successfully' };
+      } catch (error) {
+        // Check if it's a permission error
+        if (error.code === 'permission-denied') {
+          Logger.warn(LogCategory.DATABASE, 'Firebase permission denied. Please check your Firebase security rules.', { error });
+          return { 
+            success: false, 
+            message: 'Firebase permission denied. Please check your Firebase security rules.',
+            error
+          };
+        }
+        
+        // Re-throw other errors to be caught by tryCatch
+        throw error;
+      }
     }, LogCategory.DATABASE, 'migrating user profile', { success: false, message: 'Failed to migrate user profile' });
   }
   
@@ -110,30 +150,45 @@ class FirebaseMigration {
    */
   async migrateFavorites(userId) {
     return await tryCatch(async () => {
-      // Get favorites from AsyncStorage
-      const favoritesJson = await AsyncStorage.getItem('favorites');
-      const favorites = favoritesJson ? JSON.parse(favoritesJson) : [];
-      
-      if (favorites.length === 0) {
-        return { success: true, message: 'No favorites to migrate' };
+      try {
+        // Get favorites from AsyncStorage
+        const favoritesJson = await AsyncStorage.getItem('favorites');
+        const favorites = favoritesJson ? JSON.parse(favoritesJson) : [];
+        
+        if (favorites.length === 0) {
+          return { success: true, message: 'No favorites to migrate' };
+        }
+        
+        // Create favorites collection in Firestore
+        const userFavoritesRef = collection(firestore, 'users', userId, 'favorites');
+        
+        // Add each favorite
+        for (const favorite of favorites) {
+          const docRef = doc(userFavoritesRef, favorite.id.toString());
+          await setDoc(docRef, {
+            ...favorite,
+            createdAt: serverTimestamp()
+          });
+        }
+        
+        return { 
+          success: true, 
+          message: `Migrated ${favorites.length} favorites successfully` 
+        };
+      } catch (error) {
+        // Check if it's a permission error
+        if (error.code === 'permission-denied') {
+          Logger.warn(LogCategory.DATABASE, 'Firebase permission denied when migrating favorites.', { error });
+          return { 
+            success: false, 
+            message: 'Firebase permission denied when migrating favorites.',
+            error
+          };
+        }
+        
+        // Re-throw other errors to be caught by tryCatch
+        throw error;
       }
-      
-      // Create favorites collection in Firestore
-      const userFavoritesRef = collection(firestore, 'users', userId, 'favorites');
-      
-      // Add each favorite
-      for (const favorite of favorites) {
-        const docRef = doc(userFavoritesRef, favorite.id.toString());
-        await setDoc(docRef, {
-          ...favorite,
-          createdAt: serverTimestamp()
-        });
-      }
-      
-      return { 
-        success: true, 
-        message: `Migrated ${favorites.length} favorites successfully` 
-      };
     }, LogCategory.DATABASE, 'migrating favorites', { success: false, message: 'Failed to migrate favorites' });
   }
   
@@ -144,30 +199,45 @@ class FirebaseMigration {
    */
   async migrateVisitHistory(userId) {
     return await tryCatch(async () => {
-      // Get visit history from AsyncStorage
-      const visitsJson = await AsyncStorage.getItem('checkin_history');
-      const visits = visitsJson ? JSON.parse(visitsJson) : [];
-      
-      if (visits.length === 0) {
-        return { success: true, message: 'No visit history to migrate' };
+      try {
+        // Get visit history from AsyncStorage
+        const visitsJson = await AsyncStorage.getItem('checkin_history');
+        const visits = visitsJson ? JSON.parse(visitsJson) : [];
+        
+        if (visits.length === 0) {
+          return { success: true, message: 'No visit history to migrate' };
+        }
+        
+        // Create visits collection in Firestore
+        const userVisitsRef = collection(firestore, 'users', userId, 'visits');
+        
+        // Add each visit
+        for (const visit of visits) {
+          const docRef = doc(userVisitsRef);
+          await setDoc(docRef, {
+            ...visit,
+            timestamp: visit.timestamp || new Date().toISOString()
+          });
+        }
+        
+        return { 
+          success: true, 
+          message: `Migrated ${visits.length} visits successfully` 
+        };
+      } catch (error) {
+        // Check if it's a permission error
+        if (error.code === 'permission-denied') {
+          Logger.warn(LogCategory.DATABASE, 'Firebase permission denied when migrating visit history.', { error });
+          return { 
+            success: false, 
+            message: 'Firebase permission denied when migrating visit history.',
+            error
+          };
+        }
+        
+        // Re-throw other errors to be caught by tryCatch
+        throw error;
       }
-      
-      // Create visits collection in Firestore
-      const userVisitsRef = collection(firestore, 'users', userId, 'visits');
-      
-      // Add each visit
-      for (const visit of visits) {
-        const docRef = doc(userVisitsRef);
-        await setDoc(docRef, {
-          ...visit,
-          timestamp: visit.timestamp || new Date().toISOString()
-        });
-      }
-      
-      return { 
-        success: true, 
-        message: `Migrated ${visits.length} visits successfully` 
-      };
     }, LogCategory.DATABASE, 'migrating visit history', { success: false, message: 'Failed to migrate visit history' });
   }
   

@@ -1,6 +1,6 @@
 // src/components/DevTools.js
 import React, { useState, useEffect } from 'react';
-import { View, Text, Switch, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, Switch, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { Icon } from '@rneui/themed';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
@@ -9,6 +9,7 @@ import { tryCatch } from '../utils/ErrorHandler';
 import serviceProvider from '../services/ServiceProvider';
 import appInitializer from '../utils/AppInitializer';
 import firebaseMigration from '../utils/FirebaseMigration';
+import redemptionService from '../services/RedemptionService';
 
 /**
  * Developer tools component for testing and debugging
@@ -66,10 +67,25 @@ const DevTools = () => {
         alert('Migration completed successfully!');
       } else {
         Logger.warn(LogCategory.DATABASE, 'Firebase migration issues', { result });
-        alert(`Migration completed with issues: ${result.vendors.message}`);
+        
+        // Check if it's an authentication error
+        if (result.user && result.user.error && result.user.error.code && result.user.error.code.includes('auth')) {
+          alert(`Firebase authentication failed: ${result.user.message}. Please check your Firebase configuration.`);
+        }
+        // Check if it's a permission error
+        else if (
+          (result.user && result.user.error && result.user.error.code === 'permission-denied') ||
+          (result.favorites && result.favorites.error && result.favorites.error.code === 'permission-denied') ||
+          (result.visits && result.visits.error && result.visits.error.code === 'permission-denied') ||
+          (result.vendors && result.vendors.error && result.vendors.error.code === 'permission-denied')
+        ) {
+          alert('Firebase permission denied. Please check your Firebase security rules or contact the administrator.');
+        } else {
+          alert(`Migration completed with issues: ${result.user.message}`);
+        }
       }
     } catch (error) {
-      Logger.error(LogCategory.DATABASE, 'Error running migration', { error });
+      Logger.error(LogCategory.DATABASE, 'Error during migration', { error });
       alert(`Migration failed: ${error.message}`);
     }
   };
@@ -116,6 +132,49 @@ const DevTools = () => {
     } catch (error) {
       Logger.error(LogCategory.STORAGE, 'Error resetting migration status', { error });
       alert('Error resetting migration status');
+    }
+  };
+
+  // Clear all app data
+  const clearAllAppData = async () => {
+    try {
+      // Show confirmation alert
+      Alert.alert(
+        "Clear All App Data",
+        "This will clear all app data including redemptions, journey data, and other states. The app will restart. Are you sure?",
+        [
+          {
+            text: "Cancel",
+            style: "cancel"
+          },
+          {
+            text: "Clear All Data",
+            onPress: async () => {
+              // Clear redemption history
+              await redemptionService.clearRedemptionHistory();
+              
+              // Get all keys from AsyncStorage
+              const allKeys = await AsyncStorage.getAllKeys();
+              
+              // Remove all keys
+              await AsyncStorage.multiRemove(allKeys);
+              
+              Logger.info(LogCategory.GENERAL, 'All app data cleared by developer');
+              
+              // Navigate back to age verification
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'AgeVerification' }],
+              });
+              
+              alert('All app data cleared successfully');
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      Logger.error(LogCategory.STORAGE, 'Error clearing all app data', { error });
+      alert('Error clearing app data: ' + error.message);
     }
   };
 
@@ -196,6 +255,22 @@ const DevTools = () => {
             </View>
             <Text style={styles.helpText}>
               {userDataExists ? 'User data exists' : 'No user data found'}
+            </Text>
+          </View>
+          
+          {/* Clear All App Data */}
+          <View style={styles.section}>
+            <Text style={styles.sectionHeader}>Clear All App Data</Text>
+            <View style={styles.buttonRow}>
+              <TouchableOpacity 
+                style={[styles.button, styles.dangerButton]} 
+                onPress={clearAllAppData}
+              >
+                <Text style={styles.buttonText}>Clear All App Data</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.helpText}>
+              Clears all app data including redemptions, journey data, and other states
             </Text>
           </View>
         </ScrollView>
@@ -287,6 +362,9 @@ const styles = StyleSheet.create({
   },
   warningButton: {
     backgroundColor: '#F44336',
+  },
+  dangerButton: {
+    backgroundColor: '#D32F2F',
   },
   disabledButton: {
     backgroundColor: '#CCCCCC',

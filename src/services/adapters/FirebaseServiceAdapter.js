@@ -5,7 +5,7 @@ import {
   DealRepository, 
   UserRepository,
   JourneyRepository
-} from '../../repositories';
+} from '../../repositories/repositoryExports';
 import locationService from '../LocationService';
 
 /**

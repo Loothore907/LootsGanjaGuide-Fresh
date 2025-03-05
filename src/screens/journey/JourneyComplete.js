@@ -1,5 +1,5 @@
 // src/screens/journey/JourneyComplete.js
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { 
   View, 
   StyleSheet, 
@@ -24,6 +24,7 @@ const JourneyComplete = ({ navigation, route }) => {
   const { state, dispatch } = useAppState();
   const [journeyData, setJourneyData] = useState(null);
   const [noBonusReason, setNoBonusReason] = useState(null);
+  const pointsAwardedRef = useRef(false);
   
   // Get termination type from route params, default to "success" if not provided
   const { terminationType = "success" } = route.params || {};
@@ -110,44 +111,51 @@ const JourneyComplete = ({ navigation, route }) => {
     };
   };
   
-  const pointsInfo = calculatePoints();
+  // Calculate points once when journeyData is available
+  const pointsInfo = React.useMemo(() => calculatePoints(), [journeyData]);
   
   // Estimated money saved (dummy value for now)
   const estimatedSavings = vendorsVisited.filter(v => v.checkedIn).length * 15; // Assume $15 savings per successful checkin
   
-  // Award points on component mount
+  // Award points on component mount - only once
   useEffect(() => {
-    // Update points in global state
-    dispatch(AppActions.updatePoints(pointsInfo.totalPoints));
-    
-    // Log journey completion or termination
-    Logger.info(
-      LogCategory.JOURNEY, 
-      isSuccess ? 'Journey completed successfully' : 'Journey terminated early', 
-      {
-        journeyType,
-        vendorsVisited: vendorsVisited.length,
-        checkedInCount: vendorsVisited.filter(v => v.checkedIn).length,
-        totalVendors,
-        totalDistance,
-        pointsEarned: pointsInfo.totalPoints
-      }
-    );
-    
-    // For successful journeys, immediately clear journey state
-    if (isSuccess) {
-      // Explicitly clear all journey-related data from storage
-      AsyncStorage.multiRemove([
-        'current_journey', 
-        'current_route_data'
-      ]);
+    // Only proceed if we have journey data and haven't awarded points yet
+    if (journeyData && !pointsAwardedRef.current) {
+      // Mark points as awarded to prevent infinite loop
+      pointsAwardedRef.current = true;
       
-      // Clear state
-      dispatch(AppActions.endJourney());
+      // Update points in global state
+      dispatch(AppActions.updatePoints(pointsInfo.totalPoints));
+      
+      // Log journey completion or termination
+      Logger.info(
+        LogCategory.JOURNEY, 
+        isSuccess ? 'Journey completed successfully' : 'Journey terminated early', 
+        {
+          journeyType,
+          vendorsVisited: vendorsVisited.length,
+          checkedInCount: vendorsVisited.filter(v => v.checkedIn).length,
+          totalVendors,
+          totalDistance,
+          pointsEarned: pointsInfo.totalPoints
+        }
+      );
+      
+      // For successful journeys, immediately clear journey state
+      if (isSuccess) {
+        // Explicitly clear all journey-related data from storage
+        AsyncStorage.multiRemove([
+          'current_journey', 
+          'current_route_data'
+        ]);
+        
+        // Clear state
+        dispatch(AppActions.endJourney());
+      }
+      
+      // Otherwise, wait for user confirmation before clearing
     }
-    
-    // Otherwise, wait for user confirmation before clearing
-  }, [journeyData]);
+  }, [journeyData, dispatch]);
   
   // Handle confirmation for early termination
   const handleConfirmTermination = async () => {

@@ -497,4 +497,5 @@ class VendorRepository extends BaseRepository {
   }
 }
 
+// Export as default
 export default new VendorRepository();

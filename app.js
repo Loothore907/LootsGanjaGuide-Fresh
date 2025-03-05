@@ -67,7 +67,7 @@ const MainTabs = () => {
           } else if (route.name === 'Map') {
             iconName = focused ? 'map' : 'map-outline';
           } else if (route.name === 'Profile') {
-            iconName = focused ? 'person' : 'person-outline';
+            iconName = focused ? 'account' : 'account-outline';
           }
 
           return <Icon name={iconName} type={route.name === 'Deals' ? 'material' : 'material-community'} size={size} color={color} />;

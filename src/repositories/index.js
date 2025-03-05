@@ -217,8 +217,4 @@ export class BaseRepository {
   }
 }
 
-// Export specific repositories
-export { default as VendorRepository } from './VendorRepository';
-export { default as DealRepository } from './DealRepository';
-export { default as UserRepository } from './UserRepository';
-export { default as JourneyRepository } from './JourneyRepository';
+// Remove the circular dependency by not importing specific repositories here

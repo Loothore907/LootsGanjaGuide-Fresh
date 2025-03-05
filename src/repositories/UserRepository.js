@@ -647,4 +647,5 @@ class UserRepository extends BaseRepository {
   }
 }
 
+// Export as default
 export default new UserRepository();

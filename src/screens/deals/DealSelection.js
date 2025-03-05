@@ -23,13 +23,15 @@ import { Logger, LogCategory } from '../../services/LoggingService';
 import redemptionService from '../../services/RedemptionService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const DealSelection = ({ navigation }) => {
+const DealSelection = ({ navigation, route }) => {
   const { state, dispatch } = useAppState();
   
+  // Get the deal type passed from the previous screen
+  const selectedDealType = route.params?.dealType || route.params?.initialDealType || 'daily';
+  
   // State variables
-  const [selectedDealType, setSelectedDealType] = useState('daily');
   const [numVendors, setNumVendors] = useState(3);
-  const [maxDistance, setMaxDistance] = useState(20);
+  const [maxDistance, setMaxDistance] = useState(10); // Default starting value is now 10
   const [isLoading, setIsLoading] = useState(false);
   const [locationStatus, setLocationStatus] = useState('unknown');
   const [recentRedemptions, setRecentRedemptions] = useState([]);
@@ -117,7 +119,7 @@ const DealSelection = ({ navigation }) => {
       if (routeResult.vendors.length === 0) {
         Alert.alert(
           'No Vendors Found',
-          'We couldn\'t find any vendors with the selected deal type. Please try a different deal type or increase your search distance.',
+          'We couldn\'t find any vendors with the selected deal type. Please try increasing your search distance.',
           [{ text: 'OK' }]
         );
         setIsLoading(false);
@@ -166,40 +168,6 @@ const DealSelection = ({ navigation }) => {
     }
   };
   
-  // Render deal type selection buttons
-  const renderDealTypeButtons = () => {
-    const dealTypes = [
-      { key: 'daily', title: 'Daily Deals', icon: 'today' },
-      { key: 'birthday', title: 'Birthday Deals', icon: 'cake' },
-      { key: 'special', title: 'Special Deals', icon: 'stars' }
-    ];
-    
-    return (
-      <View style={styles.dealTypeContainer}>
-        {dealTypes.map(dealType => (
-          <Button
-            key={dealType.key}
-            title={dealType.title}
-            icon={{
-              name: dealType.icon,
-              type: 'material',
-              size: 20,
-              color: selectedDealType === dealType.key ? 'white' : '#4CAF50'
-            }}
-            type={selectedDealType === dealType.key ? 'solid' : 'outline'}
-            buttonStyle={[
-              styles.dealTypeButton,
-              selectedDealType === dealType.key ? styles.selectedDealTypeButton : null
-            ]}
-            containerStyle={styles.dealTypeButtonContainer}
-            titleStyle={selectedDealType === dealType.key ? styles.selectedButtonTitle : styles.buttonTitle}
-            onPress={() => setSelectedDealType(dealType.key)}
-          />
-        ))}
-      </View>
-    );
-  };
-  
   // Render recent redemptions
   const renderRecentRedemptions = () => {
     if (recentRedemptions.length === 0) {
@@ -228,10 +196,6 @@ const DealSelection = ({ navigation }) => {
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <Text style={styles.header}>Select Your Journey</Text>
         
-        {/* Deal Type Selection */}
-        <Text style={styles.sectionTitle}>What kind of deals are you looking for?</Text>
-        {renderDealTypeButtons()}
-        
         {/* Recent Redemptions */}
         {renderRecentRedemptions()}
         
@@ -242,7 +206,7 @@ const DealSelection = ({ navigation }) => {
             value={numVendors}
             onValueChange={value => setNumVendors(value)}
             minimumValue={1}
-            maximumValue={5}
+            maximumValue={10}
             step={1}
             thumbStyle={styles.thumbStyle}
             thumbProps={{
@@ -255,10 +219,10 @@ const DealSelection = ({ navigation }) => {
           />
           <View style={styles.sliderLabels}>
             <Text>1</Text>
-            <Text>2</Text>
             <Text>3</Text>
-            <Text>4</Text>
             <Text>5</Text>
+            <Text>8</Text>
+            <Text>10</Text>
           </View>
         </View>
         
@@ -268,9 +232,9 @@ const DealSelection = ({ navigation }) => {
           <Slider
             value={maxDistance}
             onValueChange={value => setMaxDistance(value)}
-            minimumValue={5}
-            maximumValue={50}
-            step={5}
+            minimumValue={10}
+            maximumValue={100}
+            step={25}
             thumbStyle={styles.thumbStyle}
             thumbProps={{
               children: (
@@ -281,11 +245,11 @@ const DealSelection = ({ navigation }) => {
             minimumTrackTintColor="#4CAF50"
           />
           <View style={styles.sliderLabels}>
-            <Text>5</Text>
-            <Text>15</Text>
-            <Text>25</Text>
+            <Text>10</Text>
             <Text>35</Text>
-            <Text>50</Text>
+            <Text>60</Text>
+            <Text>85</Text>
+            <Text>100</Text>
           </View>
         </View>
         
@@ -366,29 +330,6 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 8,
     color: '#333333',
-  },
-  dealTypeContainer: {
-    flexDirection: 'column',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  dealTypeButtonContainer: {
-    marginBottom: 8,
-  },
-  dealTypeButton: {
-    borderColor: '#4CAF50',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 12,
-  },
-  selectedDealTypeButton: {
-    backgroundColor: '#4CAF50',
-  },
-  buttonTitle: {
-    color: '#4CAF50',
-  },
-  selectedButtonTitle: {
-    color: 'white',
   },
   sliderContainer: {
     marginBottom: 24,

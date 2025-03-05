@@ -590,4 +590,5 @@ class JourneyRepository extends BaseRepository {
   }
 }
 
+// Export as default
 export default new JourneyRepository();

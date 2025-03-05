@@ -502,4 +502,5 @@ class DealRepository extends BaseRepository {
   }
 }
 
+// Export as default
 export default new DealRepository();
