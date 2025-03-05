@@ -18,7 +18,8 @@ export const DayOfWeek = {
     THURSDAY: 'thursday',
     FRIDAY: 'friday',
     SATURDAY: 'saturday',
-    SUNDAY: 'sunday'
+    SUNDAY: 'sunday',
+    EVERYDAY: 'everyday'
   };
   
   /**
@@ -29,7 +30,8 @@ export const DayOfWeek = {
   export const DealType = {
     BIRTHDAY: 'birthday',
     DAILY: 'daily',
-    SPECIAL: 'special'
+    SPECIAL: 'special',
+    EVERYDAY: 'everyday'
   };
   
   /**
@@ -100,6 +102,7 @@ export const DayOfWeek = {
    * @typedef {Object} VendorDeals
    * @property {Deal} [birthday] - Birthday deal if available
    * @property {Object.<DayOfWeek, Deal[]>} daily - Daily deals organized by day of week
+   * @property {Deal[]} [everyday] - Deals available every day of the week
    * @property {SpecialDeal[]} special - Array of special/limited time deals
    */
   

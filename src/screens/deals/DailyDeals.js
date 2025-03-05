@@ -57,7 +57,8 @@ const DailyDeals = ({ navigation }) => {
     { id: 'thursday', label: 'Thu' },
     { id: 'friday', label: 'Fri' },
     { id: 'saturday', label: 'Sat' },
-    { id: 'sunday', label: 'Sun' }
+    { id: 'sunday', label: 'Sun' },
+    { id: 'everyday', label: 'All' }
   ];
   
   // Helper function to get current day of week
@@ -142,7 +143,17 @@ const DailyDeals = ({ navigation }) => {
         
         <View style={styles.dealInfo}>
           <Text style={styles.vendorName}>{item.vendorName}</Text>
-          <Text style={styles.dealTitle}>{item.title}</Text>
+          
+          <View style={styles.dealTitleContainer}>
+            <Text style={styles.dealTitle}>{item.title}</Text>
+            {item.isEveryday && (
+              <Chip
+                title="Everyday"
+                buttonStyle={styles.everydayChip}
+                titleStyle={styles.everydayChipText}
+              />
+            )}
+          </View>
           
           <View style={styles.discountContainer}>
             <Text style={styles.discountText}>{item.discount}</Text>
@@ -450,6 +461,26 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 10,
   },
+  dealTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginBottom: 4
+  },
+  
+  everydayChip: {
+    backgroundColor: '#4CAF50',
+    marginLeft: 8,
+    height: 24,
+    borderRadius: 12
+  },
+  
+  everydayChipText: {
+    fontSize: 10,
+    color: 'white',
+    fontWeight: 'bold'
+  },
+  
   // Continue with your existing styles...
 });
 

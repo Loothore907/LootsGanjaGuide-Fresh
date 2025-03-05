@@ -813,7 +813,7 @@ export const getDailyDeals = (day, options = {}) => {
         Logger.info(LogCategory.DEALS, 'Getting daily deals', { day, options });
         
         // Validate day parameter
-        const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        const validDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'everyday'];
         if (!validDays.includes(day)) {
           throw new Error(`Invalid day: ${day}. Must be one of: ${validDays.join(', ')}`);
         }
@@ -822,21 +822,52 @@ export const getDailyDeals = (day, options = {}) => {
         let dailyDeals = [];
         
         MOCK_VENDORS.forEach(vendor => {
-          if (vendor.deals.daily && vendor.deals.daily[day]) {
-            vendor.deals.daily[day].forEach(deal => {
-              dailyDeals.push({
-                id: `${vendor.id}-${day}-${dailyDeals.length}`,
-                title: deal.description,
-                description: deal.description,
-                discount: deal.discount,
-                restrictions: deal.restrictions,
-                vendorId: vendor.id,
-                vendorName: vendor.name,
-                dealType: 'daily',
-                day: day,
-                vendorDistance: vendor.distance,
-                vendorIsPartner: vendor.isPartner
-              });
+          // Handle specific day deals
+          if (vendor.deals && vendor.deals.daily) {
+            // Safely access the day's deals, defaulting to an empty array if null/undefined
+            const dayDeals = vendor.deals.daily[day] || [];
+            
+            // Process each deal for this day
+            dayDeals.forEach(deal => {
+              if (deal) { // Only process if deal is not null/undefined
+                dailyDeals.push({
+                  id: `${vendor.id}-${day}-${dailyDeals.length}`,
+                  title: deal.description || 'Deal',
+                  description: deal.description || 'No description available',
+                  discount: deal.discount || 'Special offer',
+                  restrictions: deal.restrictions || [],
+                  vendorId: vendor.id,
+                  vendorName: vendor.name,
+                  dealType: 'daily',
+                  day: day,
+                  vendorDistance: vendor.distance || 0,
+                  vendorIsPartner: vendor.isPartner || false
+                });
+              }
+            });
+          }
+          
+          // Also include everyday deals if they exist (for any day request)
+          if (vendor.deals && vendor.deals.everyday && day !== 'everyday') {
+            const everydayDeals = vendor.deals.everyday || [];
+            
+            everydayDeals.forEach(deal => {
+              if (deal) { // Only process if deal is not null/undefined
+                dailyDeals.push({
+                  id: `${vendor.id}-everyday-${dailyDeals.length}`,
+                  title: deal.description || 'Everyday Deal',
+                  description: deal.description || 'No description available',
+                  discount: deal.discount || 'Special offer',
+                  restrictions: deal.restrictions || [],
+                  vendorId: vendor.id,
+                  vendorName: vendor.name,
+                  dealType: 'everyday',
+                  day: 'everyday',
+                  vendorDistance: vendor.distance || 0,
+                  vendorIsPartner: vendor.isPartner || false,
+                  isEveryday: true // Flag to identify everyday deals
+                });
+              }
             });
           }
         });

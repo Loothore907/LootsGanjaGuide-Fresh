@@ -1,6 +1,6 @@
 // src/components/DevTools.js
 import React, { useState, useEffect } from 'react';
-import { View, Text, Switch, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { View, Text, Switch, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { Icon } from '@rneui/themed';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
@@ -20,6 +20,10 @@ const DevTools = () => {
   const [useFirebase, setUseFirebase] = useState(false);
   const [userDataExists, setUserDataExists] = useState(false);
   const [migrationCompleted, setMigrationCompleted] = useState(false);
+  const [migrationInProgress, setMigrationInProgress] = useState(false);
+  const [migrationResult, setMigrationResult] = useState(null);
+  const [forceMigration, setForceMigration] = useState(false);
+  const [activeTab, setActiveTab] = useState('Data');
   const navigation = useNavigation();
 
   // Load initial state
@@ -51,6 +55,7 @@ const DevTools = () => {
     try {
       await appInitializer.toggleDataSource(value);
       setUseFirebase(value);
+      Logger.info(LogCategory.GENERAL, `Toggled data source to ${value ? 'Firebase' : 'Mock data'}`);
     } catch (error) {
       Logger.error(LogCategory.GENERAL, 'Error toggling data source', { error });
     }
@@ -58,35 +63,68 @@ const DevTools = () => {
 
   // Run Firebase migration
   const runMigration = async () => {
+    setMigrationInProgress(true);
+    setMigrationResult({ status: 'in_progress', message: 'Migration in progress...' });
+    
     try {
-      const result = await firebaseMigration.migrateAllData();
-      if (result.success) {
-        await AsyncStorage.setItem('firebase_migration_completed', 'true');
+      // Show an alert to let the user know migration has started
+      Alert.alert(
+        "Migration Started",
+        "Data migration has started. This may take a moment...",
+        [{ text: "OK" }]
+      );
+      
+      const result = await firebaseMigration.migrateAllData({ force: forceMigration });
+      
+      if (result.skipped) {
+        setMigrationResult({
+          status: 'skipped',
+          message: 'Migration skipped. Data already exists.',
+          details: result
+        });
+        Alert.alert("Migration Skipped", "Data already exists in Firebase. Use Force Override option to replace it.");
+      } else if (result.success) {
         setMigrationCompleted(true);
-        Logger.info(LogCategory.DATABASE, 'Firebase migration completed', { result });
-        alert('Migration completed successfully!');
+        setMigrationResult({
+          status: 'success',
+          message: 'Migration completed successfully!',
+          details: result
+        });
+        Logger.info(LogCategory.DATABASE, 'Firebase migration completed successfully', { result });
+        Alert.alert("Success", "Migration completed successfully!");
       } else {
-        Logger.warn(LogCategory.DATABASE, 'Firebase migration issues', { result });
-        
-        // Check if it's an authentication error
-        if (result.user && result.user.error && result.user.error.code && result.user.error.code.includes('auth')) {
-          alert(`Firebase authentication failed: ${result.user.message}. Please check your Firebase configuration.`);
-        }
-        // Check if it's a permission error
-        else if (
-          (result.user && result.user.error && result.user.error.code === 'permission-denied') ||
-          (result.favorites && result.favorites.error && result.favorites.error.code === 'permission-denied') ||
-          (result.visits && result.visits.error && result.visits.error.code === 'permission-denied') ||
-          (result.vendors && result.vendors.error && result.vendors.error.code === 'permission-denied')
-        ) {
-          alert('Firebase permission denied. Please check your Firebase security rules or contact the administrator.');
-        } else {
-          alert(`Migration completed with issues: ${result.user.message}`);
-        }
+        setMigrationResult({
+          status: 'error',
+          message: 'Migration completed with issues',
+          details: result
+        });
+        Logger.warn(LogCategory.DATABASE, 'Firebase migration had issues', { result });
+        Alert.alert("Warning", `Migration completed with issues. Check logs for details.`);
       }
     } catch (error) {
       Logger.error(LogCategory.DATABASE, 'Error during migration', { error });
-      alert(`Migration failed: ${error.message}`);
+      setMigrationResult({
+        status: 'error',
+        message: `Migration failed: ${error.message}`,
+        error: error.message
+      });
+      Alert.alert("Error", `Migration failed: ${error.message}`);
+    } finally {
+      setMigrationInProgress(false);
+    }
+  };
+
+  // Reset migration status
+  const resetMigrationStatus = async () => {
+    try {
+      await AsyncStorage.removeItem('firebase_migration_completed');
+      setMigrationCompleted(false);
+      setMigrationResult(null);
+      Logger.info(LogCategory.DATABASE, 'Migration status reset by developer');
+      Alert.alert('Success', 'Migration status reset');
+    } catch (error) {
+      Logger.error(LogCategory.STORAGE, 'Error resetting migration status', { error });
+      Alert.alert('Error', 'Failed to reset migration status');
     }
   };
 
@@ -115,23 +153,10 @@ const DevTools = () => {
         routes: [{ name: 'AgeVerification' }],
       });
       
-      alert('User data reset complete');
+      Alert.alert('Success', 'User data reset complete');
     } catch (error) {
       Logger.error(LogCategory.STORAGE, 'Error resetting user data', { error });
-      alert('Error resetting user data');
-    }
-  };
-
-  // Reset migration status
-  const resetMigrationStatus = async () => {
-    try {
-      await AsyncStorage.removeItem('firebase_migration_completed');
-      setMigrationCompleted(false);
-      Logger.info(LogCategory.DATABASE, 'Migration status reset by developer');
-      alert('Migration status reset');
-    } catch (error) {
-      Logger.error(LogCategory.STORAGE, 'Error resetting migration status', { error });
-      alert('Error resetting migration status');
+      Alert.alert('Error', 'Failed to reset user data');
     }
   };
 
@@ -141,7 +166,7 @@ const DevTools = () => {
       // Show confirmation alert
       Alert.alert(
         "Clear All App Data",
-        "This will clear all app data including redemptions, journey data, and other states. The app will restart. Are you sure?",
+        "This will clear all app data including AsyncStorage and Firebase data (if connected). The app will restart. Are you sure?",
         [
           {
             text: "Cancel",
@@ -149,32 +174,48 @@ const DevTools = () => {
           },
           {
             text: "Clear All Data",
+            style: "destructive",
             onPress: async () => {
-              // Clear redemption history
-              await redemptionService.clearRedemptionHistory();
-              
-              // Get all keys from AsyncStorage
-              const allKeys = await AsyncStorage.getAllKeys();
-              
-              // Remove all keys
-              await AsyncStorage.multiRemove(allKeys);
-              
-              Logger.info(LogCategory.GENERAL, 'All app data cleared by developer');
-              
-              // Navigate back to age verification
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'AgeVerification' }],
-              });
-              
-              alert('All app data cleared successfully');
+              try {
+                // Clear redemption history
+                await redemptionService.clearRedemptionHistory();
+                
+                // Get all keys from AsyncStorage
+                const allKeys = await AsyncStorage.getAllKeys();
+                
+                // Remove all keys
+                await AsyncStorage.multiRemove(allKeys);
+                
+                // If using Firebase, clear Firebase data too
+                if (useFirebase) {
+                  try {
+                    await firebaseMigration.clearAllData();
+                    Logger.info(LogCategory.DATABASE, 'Firebase data cleared by developer');
+                  } catch (error) {
+                    Logger.error(LogCategory.DATABASE, 'Error clearing Firebase data', { error });
+                  }
+                }
+                
+                Logger.info(LogCategory.GENERAL, 'All app data cleared by developer');
+                
+                // Navigate back to age verification
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'AgeVerification' }],
+                });
+                
+                Alert.alert('Success', 'All app data cleared successfully');
+              } catch (error) {
+                Logger.error(LogCategory.STORAGE, 'Error in clearAllAppData', { error });
+                Alert.alert('Error', 'Failed to clear all data: ' + error.message);
+              }
             }
           }
         ]
       );
     } catch (error) {
-      Logger.error(LogCategory.STORAGE, 'Error clearing all app data', { error });
-      alert('Error clearing app data: ' + error.message);
+      Logger.error(LogCategory.STORAGE, 'Error preparing clearAllAppData', { error });
+      Alert.alert('Error', 'Failed to clear app data: ' + error.message);
     }
   };
 
@@ -189,6 +230,148 @@ const DevTools = () => {
     );
   }
 
+  // Render Data Source tab
+  const renderDataTab = () => (
+    <>
+      {/* Data Source Section */}
+      <View style={styles.section}>
+        <Text style={styles.sectionHeader}>Data Source</Text>
+        <View style={styles.toggleRow}>
+          <Text style={styles.toggleLabel}>Use Firebase</Text>
+          <Switch
+            value={useFirebase}
+            onValueChange={toggleFirebase}
+            trackColor={{ false: "#767577", true: "#4CAF50" }}
+          />
+        </View>
+        <Text style={styles.helpText}>
+          {useFirebase ? 'Using Firebase data' : 'Using mock data'}
+        </Text>
+      </View>
+      
+      {/* Firebase Migration Section */}
+      <View style={styles.section}>
+        <Text style={styles.sectionHeader}>Firebase Migration</Text>
+        
+        <View style={styles.toggleRow}>
+          <Text style={styles.toggleLabel}>Force Override Existing Data</Text>
+          <Switch
+            value={forceMigration}
+            onValueChange={setForceMigration}
+            disabled={migrationInProgress}
+            trackColor={{ false: "#767577", true: "#F44336" }}
+          />
+        </View>
+        
+        <View style={styles.buttonRow}>
+          <TouchableOpacity 
+            style={[
+              styles.button, 
+              migrationInProgress && styles.disabledButton
+            ]} 
+            onPress={runMigration}
+            disabled={migrationInProgress}
+          >
+            <Text style={styles.buttonText}>
+              {migrationInProgress ? 'Migrating...' : 'Migrate to Firebase'}
+            </Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[
+              styles.button, 
+              (!migrationCompleted || migrationInProgress) && styles.disabledButton
+            ]}
+            onPress={resetMigrationStatus}
+            disabled={!migrationCompleted || migrationInProgress}
+          >
+            <Text style={styles.buttonText}>Reset Status</Text>
+          </TouchableOpacity>
+        </View>
+        
+        <Text style={styles.helpText}>
+          {migrationCompleted ? 'Migration completed' : 'Migration not yet run'}
+        </Text>
+
+        {/* Migration progress indicator */}
+        {migrationInProgress && (
+          <View style={styles.progressContainer}>
+            <ActivityIndicator size="large" color="#2196F3" />
+            <Text style={styles.progressText}>Migration in progress...</Text>
+          </View>
+        )}
+        
+        {/* Migration Result */}
+        {migrationResult && !migrationInProgress && (
+          <View style={styles.resultContainer}>
+            <Text style={[
+              styles.resultStatus,
+              migrationResult.status === 'success' && styles.successText,
+              migrationResult.status === 'error' && styles.errorText,
+              migrationResult.status === 'skipped' && styles.warningText
+            ]}>
+              {migrationResult.status.toUpperCase()}: {migrationResult.message}
+            </Text>
+          </View>
+        )}
+      </View>
+      
+      {/* Clear All App Data */}
+      <View style={styles.section}>
+        <Text style={styles.sectionHeader}>Clear All App Data</Text>
+        <View style={styles.buttonRow}>
+          <TouchableOpacity 
+            style={[styles.button, styles.dangerButton]} 
+            onPress={clearAllAppData}
+          >
+            <Text style={styles.buttonText}>Clear All App Data</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.helpText}>
+          Clears all app data including AsyncStorage, redemptions, and Firebase data
+        </Text>
+      </View>
+    </>
+  );
+
+  // Render User tab
+  const renderUserTab = () => (
+    <View style={styles.section}>
+      <Text style={styles.sectionHeader}>User Auth Status</Text>
+      <Text style={styles.helpText}>
+        {userDataExists ? 'User data exists' : 'No user data found'}
+      </Text>
+      
+      <TouchableOpacity 
+        style={[styles.button, styles.warningButton, !userDataExists && styles.disabledButton]} 
+        onPress={resetUserData}
+        disabled={!userDataExists}
+      >
+        <Text style={styles.buttonText}>Reset User Data</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  // Render Journey tab
+  const renderJourneyTab = () => (
+    <View style={styles.section}>
+      <Text style={styles.sectionHeader}>Journey Data</Text>
+      <Text style={styles.helpText}>
+        Journey management options will appear here
+      </Text>
+    </View>
+  );
+
+  // Render Logs tab
+  const renderLogsTab = () => (
+    <View style={styles.section}>
+      <Text style={styles.sectionHeader}>Recent Logs</Text>
+      <Text style={styles.helpText}>
+        Log viewing will be added in a future update
+      </Text>
+    </View>
+  );
+
   return (
     <View style={styles.overlay}>
       <View style={styles.panel}>
@@ -199,80 +382,39 @@ const DevTools = () => {
           </TouchableOpacity>
         </View>
         
-        <ScrollView>
-          {/* Data Source */}
-          <View style={styles.section}>
-            <Text style={styles.sectionHeader}>Data Source</Text>
-            <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>Use Firebase</Text>
-              <Switch
-                value={useFirebase}
-                onValueChange={toggleFirebase}
-                trackColor={{ false: "#767577", true: "#4CAF50" }}
-              />
-            </View>
-            <Text style={styles.helpText}>
-              {useFirebase ? 'Using Firebase data' : 'Using mock data'}
-            </Text>
-          </View>
-          
-          {/* Firebase Migration */}
-          <View style={styles.section}>
-            <Text style={styles.sectionHeader}>Firebase Migration</Text>
-            <View style={styles.buttonRow}>
-              <TouchableOpacity 
-                style={[styles.button, migrationCompleted && styles.disabledButton]} 
-                onPress={runMigration}
-                disabled={migrationCompleted}
-              >
-                <Text style={styles.buttonText}>Migrate Data</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.button, !migrationCompleted && styles.disabledButton]}
-                onPress={resetMigrationStatus}
-                disabled={!migrationCompleted}
-              >
-                <Text style={styles.buttonText}>Reset Status</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.helpText}>
-              {migrationCompleted ? 'Migration completed' : 'Migration not yet run'}
-            </Text>
-          </View>
-          
-          {/* User Data */}
-          <View style={styles.section}>
-            <Text style={styles.sectionHeader}>User Data</Text>
-            <View style={styles.buttonRow}>
-              <TouchableOpacity 
-                style={[styles.button, styles.warningButton, !userDataExists && styles.disabledButton]} 
-                onPress={resetUserData}
-                disabled={!userDataExists}
-              >
-                <Text style={styles.buttonText}>Reset User Data</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.helpText}>
-              {userDataExists ? 'User data exists' : 'No user data found'}
-            </Text>
-          </View>
-          
-          {/* Clear All App Data */}
-          <View style={styles.section}>
-            <Text style={styles.sectionHeader}>Clear All App Data</Text>
-            <View style={styles.buttonRow}>
-              <TouchableOpacity 
-                style={[styles.button, styles.dangerButton]} 
-                onPress={clearAllAppData}
-              >
-                <Text style={styles.buttonText}>Clear All App Data</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.helpText}>
-              Clears all app data including redemptions, journey data, and other states
-            </Text>
-          </View>
+        {/* Tab Navigation */}
+        <View style={styles.tabContainer}>
+          <TouchableOpacity 
+            style={[styles.tab, activeTab === 'Data' && styles.activeTab]} 
+            onPress={() => setActiveTab('Data')}
+          >
+            <Text style={[styles.tabText, activeTab === 'Data' && styles.activeTabText]}>Data</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.tab, activeTab === 'User' && styles.activeTab]} 
+            onPress={() => setActiveTab('User')}
+          >
+            <Text style={[styles.tabText, activeTab === 'User' && styles.activeTabText]}>User</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.tab, activeTab === 'Journey' && styles.activeTab]} 
+            onPress={() => setActiveTab('Journey')}
+          >
+            <Text style={[styles.tabText, activeTab === 'Journey' && styles.activeTabText]}>Journey</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.tab, activeTab === 'Logs' && styles.activeTab]} 
+            onPress={() => setActiveTab('Logs')}
+          >
+            <Text style={[styles.tabText, activeTab === 'Logs' && styles.activeTabText]}>Logs</Text>
+          </TouchableOpacity>
+        </View>
+        
+        <ScrollView style={styles.contentContainer}>
+          {activeTab === 'Data' && renderDataTab()}
+          {activeTab === 'User' && renderUserTab()}
+          {activeTab === 'Journey' && renderJourneyTab()}
+          {activeTab === 'Logs' && renderLogsTab()}
         </ScrollView>
       </View>
     </View>
@@ -305,25 +447,49 @@ const styles = StyleSheet.create({
     zIndex: 1000,
   },
   panel: {
-    width: '80%',
+    width: '90%',
     maxHeight: '80%',
     backgroundColor: 'white',
     borderRadius: 10,
-    padding: 20,
-    elevation: 5,
+    overflow: 'hidden',
   },
   headerContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    padding: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#eee',
-    paddingBottom: 10,
   },
   header: {
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  activeTab: {
+    borderBottomWidth: 2,
+    borderBottomColor: '#2196F3',
+  },
+  tabText: {
+    fontSize: 14,
+    color: '#757575',
+  },
+  activeTabText: {
+    color: '#2196F3',
+    fontWeight: 'bold',
+  },
+  contentContainer: {
+    padding: 15,
+    maxHeight: 400,
   },
   section: {
     marginBottom: 20,
@@ -337,7 +503,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 5,
+    marginBottom: 10,
   },
   toggleLabel: {
     fontSize: 14,
@@ -346,11 +512,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     fontStyle: 'italic',
+    marginTop: 5,
+    marginBottom: 10,
   },
   buttonRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 5,
+    marginBottom: 10,
   },
   button: {
     backgroundColor: '#2196F3',
@@ -361,10 +529,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   warningButton: {
-    backgroundColor: '#F44336',
+    backgroundColor: '#FF9800',
   },
   dangerButton: {
-    backgroundColor: '#D32F2F',
+    backgroundColor: '#F44336',
   },
   disabledButton: {
     backgroundColor: '#CCCCCC',
@@ -373,6 +541,35 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: '500',
   },
+  resultContainer: {
+    backgroundColor: '#f8f8f8',
+    borderRadius: 5,
+    padding: 10,
+    marginTop: 10,
+  },
+  resultStatus: {
+    fontWeight: 'bold',
+    marginBottom: 5,
+  },
+  successText: {
+    color: '#4CAF50',
+  },
+  errorText: {
+    color: '#F44336',
+  },
+  warningText: {
+    color: '#FF9800',
+  },
+  progressContainer: {
+    alignItems: 'center',
+    marginTop: 10,
+    padding: 10,
+  },
+  progressText: {
+    marginTop: 10,
+    fontSize: 14,
+    color: '#2196F3',
+  }
 });
 
 export default DevTools;
