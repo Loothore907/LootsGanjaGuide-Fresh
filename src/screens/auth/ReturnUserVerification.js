@@ -6,6 +6,7 @@ import { useAppState, AppActions } from '../../context/AppStateContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { tryCatch } from '../../utils/ErrorHandler';
+import firebaseAuthAdapter from '../../services/adapters/FirebaseAuthAdapter';
 
 const ReturnUserVerification = ({ navigation, route }) => {
   const { dispatch } = useAppState();
@@ -16,8 +17,27 @@ const ReturnUserVerification = ({ navigation, route }) => {
     setIsLoading(true);
     try {
       await tryCatch(async () => {
+        // Authenticate with Firebase for returning user
+        try {
+          const authResult = await firebaseAuthAdapter.signInReturningUser(username);
+          
+          if (authResult.success) {
+            Logger.info(LogCategory.AUTH, 'Firebase authentication successful for returning user', { 
+              uid: authResult.user.uid,
+              username
+            });
+          }
+        } catch (fbError) {
+          // Log the error but continue - we don't want to block the user
+          // from using the app if Firebase auth fails
+          Logger.error(LogCategory.AUTH, 'Firebase authentication failed for returning user, continuing with local auth', { 
+            error: fbError,
+            username
+          });
+        }
+        
         // Log that the user confirmed age
-        Logger.info(LogCategory.AUTH, 'Returning user confirmed age verification');
+        Logger.info(LogCategory.AUTH, 'Returning user confirmed age verification', { username });
         
         // Navigate to main dashboard
         navigation.reset({
@@ -44,7 +64,15 @@ const ReturnUserVerification = ({ navigation, route }) => {
         { 
           text: 'Clear & Restart', 
           style: 'destructive',
-          onPress: () => {
+          onPress: async () => {
+            // Sign out from Firebase if authenticated
+            try {
+              await firebaseAuthAdapter.signOut();
+            } catch (error) {
+              Logger.error(LogCategory.AUTH, 'Error signing out from Firebase', { error });
+              // Continue with clearing local data regardless of Firebase sign out result
+            }
+            
             // Clear user data
             AsyncStorage.multiRemove([
               'isAgeVerified', 

@@ -1,13 +1,22 @@
 import { 
     GOOGLE_MAPS_API_KEY, 
     API_BASE_URL, 
-    ANALYTICS_KEY 
+    ANALYTICS_KEY,
+    FIREBASE_API_KEY,
+    FIREBASE_AUTH_DOMAIN,
+    FIREBASE_PROJECT_ID,
+    FIREBASE_STORAGE_BUCKET,
+    FIREBASE_MESSAGING_SENDER_ID,
+    FIREBASE_APP_ID,
+    FIREBASE_MEASUREMENT_ID
   } from '@env';
   
   // Validate required environment variables
   const requiredVars = [
     { key: 'GOOGLE_MAPS_API_KEY', value: GOOGLE_MAPS_API_KEY },
-    { key: 'API_BASE_URL', value: API_BASE_URL }
+    { key: 'API_BASE_URL', value: API_BASE_URL },
+    { key: 'FIREBASE_API_KEY', value: FIREBASE_API_KEY },
+    { key: 'FIREBASE_PROJECT_ID', value: FIREBASE_PROJECT_ID }
   ];
   
   // In development, warn about missing variables
@@ -23,6 +32,15 @@ import {
     // API Keys
     GOOGLE_MAPS_API_KEY,
     ANALYTICS_KEY,
+    
+    // Firebase Configuration
+    FIREBASE_API_KEY,
+    FIREBASE_AUTH_DOMAIN,
+    FIREBASE_PROJECT_ID,
+    FIREBASE_STORAGE_BUCKET,
+    FIREBASE_MESSAGING_SENDER_ID,
+    FIREBASE_APP_ID,
+    FIREBASE_MEASUREMENT_ID,
     
     // API Configuration
     API_BASE_URL,

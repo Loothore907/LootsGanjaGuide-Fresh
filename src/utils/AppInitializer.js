@@ -6,6 +6,7 @@ import serviceProvider from '../services/ServiceProvider';
 import { onAuthStateChanged } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import firebaseMigration from './FirebaseMigration';
+import firebaseAuthAdapter from '../services/adapters/FirebaseAuthAdapter';
 
 /**
  * Handles app initialization tasks like setting up Firebase,
@@ -30,7 +31,7 @@ class AppInitializer {
     if (this.isInitialized) return true;
     
     const {
-      useFirebase = !__DEV__, // Default to mock in dev, Firebase in prod
+      useFirebase = !__DEV__, // Default to mock in dev, Firebase in prod by default
       migrateData = false,
       onAuthChange = null
     } = options;
@@ -43,6 +44,12 @@ class AppInitializer {
       
       // Initialize service provider (switches between Firebase and mock data)
       await serviceProvider.initialize(useFirebase);
+      
+      // Initialize Firebase Auth Adapter
+      if (useFirebase) {
+        await firebaseAuthAdapter.initialize();
+        Logger.info(LogCategory.AUTH, 'Firebase Auth Adapter initialized');
+      }
       
       // Set up Firebase auth state listener if using Firebase
       if (useFirebase) {

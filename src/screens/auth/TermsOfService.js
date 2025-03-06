@@ -6,12 +6,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
 import { useAppState, AppActions } from '../../context/AppStateContext';
+import firebaseAuthAdapter from '../../services/adapters/FirebaseAuthAdapter';
 
-const TermsOfService = ({ navigation }) => {
+const TermsOfService = ({ navigation, route }) => {
   const { dispatch } = useAppState();
   const [isLoading, setIsLoading] = useState(false);
   const [hasScrolledToBottom, setHasScrolledToBottom] = useState(false);
   const scrollViewRef = useRef(null);
+  
+  // Check if we're viewing from settings (no need to proceed to next screen)
+  const fromSettings = route.params?.fromSettings || false;
   
   // Add a scrollPosition state to track scroll position
   const [scrollPosition, setScrollPosition] = useState(0);
@@ -46,12 +50,33 @@ const TermsOfService = ({ navigation }) => {
         // Update global state
         dispatch(AppActions.setTosAccepted(true));
         
+        // Update ToS acceptance status in Firebase (if user exists)
+        try {
+          // Initialize Firebase auth adapter if not already
+          if (!firebaseAuthAdapter.isInitialized()) {
+            await firebaseAuthAdapter.initialize();
+          }
+          
+          // Update ToS acceptance status (this is a no-op if no Firebase user yet)
+          await firebaseAuthAdapter.setTosAccepted(true);
+        } catch (fbError) {
+          // Log but continue - we'll create the user later in the flow
+          Logger.warn(LogCategory.AUTH, 'Firebase ToS acceptance update skipped (no user yet)', { 
+            error: fbError 
+          });
+        }
+        
         Logger.info(LogCategory.AUTH, 'User accepted terms of service and privacy policy', {
           timestamp
         });
         
-        // Continue to username setup
-        navigation.navigate('UserSetup');
+        // If viewing from settings, just go back
+        if (fromSettings) {
+          navigation.goBack();
+        } else {
+          // Continue to username setup for new users
+          navigation.navigate('UserSetup');
+        }
       }, LogCategory.AUTH, 'terms of service acceptance', true);
     } catch (error) {
       // Error is already logged by tryCatch
@@ -61,6 +86,12 @@ const TermsOfService = ({ navigation }) => {
   };
   
   const handleDecline = () => {
+    // If viewing from settings, just go back
+    if (fromSettings) {
+      navigation.goBack();
+      return;
+    }
+    
     Alert.alert(
       'Terms Declined',
       'You must accept the Terms of Service to use Loot\'s Ganja Guide. The app will now close.',
@@ -201,12 +232,12 @@ const TermsOfService = ({ navigation }) => {
           title="Accept"
           onPress={handleAccept}
           loading={isLoading}
-          disabled={isLoading || !hasScrolledToBottom}
+          disabled={isLoading || (!fromSettings && !hasScrolledToBottom)}
           containerStyle={styles.button}
         />
       </View>
       
-      {!hasScrolledToBottom && (
+      {!hasScrolledToBottom && !fromSettings && (
         <Text style={styles.scrollHint}>
           Please scroll down to review the entire document
         </Text>

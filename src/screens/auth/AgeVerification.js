@@ -6,6 +6,7 @@ import { useAppState, AppActions } from '../../context/AppStateContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
+import firebaseAuthAdapter from '../../services/adapters/FirebaseAuthAdapter';
 
 const AgeVerification = ({ navigation }) => {
   const { dispatch } = useAppState();
@@ -26,9 +27,25 @@ const AgeVerification = ({ navigation }) => {
         // Update global state
         dispatch(AppActions.setAgeVerification(true));
         
+        // Update age verification status in Firebase (if user exists)
+        try {
+          // Initialize Firebase auth adapter if not already
+          if (!firebaseAuthAdapter.isInitialized()) {
+            await firebaseAuthAdapter.initialize();
+          }
+          
+          // Update age verification status (this is a no-op if no Firebase user yet)
+          await firebaseAuthAdapter.setAgeVerified(true);
+        } catch (fbError) {
+          // Log but continue - we'll create the user later in the flow
+          Logger.warn(LogCategory.AUTH, 'Firebase age verification update skipped (no user yet)', { 
+            error: fbError 
+          });
+        }
+        
         Logger.info(LogCategory.AUTH, 'User confirmed 21+ age verification');
         
-        // Navigate to Terms of Service screen (add this)
+        // Navigate to Terms of Service screen
         navigation.replace('TermsOfService');
       }, LogCategory.AUTH, 'age verification confirmation', true);
     } catch (error) {

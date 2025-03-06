@@ -6,12 +6,16 @@ import { useAppState, AppActions } from '../../context/AppStateContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { tryCatch } from '../../utils/ErrorHandler';
+import firebaseAuthAdapter from '../../services/adapters/FirebaseAuthAdapter';
 
-const UserSetup = ({ navigation }) => {
+const UserSetup = ({ navigation, route }) => {
   const { dispatch } = useAppState();
   const [username, setUsername] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Check if we're in edit mode
+  const isEdit = route.params?.isEdit || false;
 
   const validateUsername = (name) => {
     if (name.length < 3) {
@@ -39,23 +43,61 @@ const UserSetup = ({ navigation }) => {
 
     try {
       await tryCatch(async () => {
-        // Store username
+        // Store username in AsyncStorage
         await AsyncStorage.setItem('username', username);
         
-        // Initialize points
-        await AsyncStorage.setItem('points', '0');
+        // Initialize points if this is a new user
+        if (!isEdit) {
+          await AsyncStorage.setItem('points', '0');
+        }
         
-        // Update global state
+        // Update app state
         dispatch(AppActions.setUsername(username));
         
-        // Log success
-        Logger.info(LogCategory.AUTH, 'User setup completed', { username });
+        // Create Firebase user if this is a new user
+        if (!isEdit) {
+          try {
+            // Create anonymous user in Firebase
+            const authResult = await firebaseAuthAdapter.createAnonymousUser(username);
+            
+            if (authResult.success) {
+              Logger.info(LogCategory.AUTH, 'Firebase authentication successful', { 
+                uid: authResult.user.uid, 
+                isAnonymous: authResult.isAnonymous
+              });
+            }
+          } catch (fbError) {
+            // Log the error but continue - we don't want to block the user
+            // from using the app if Firebase auth fails
+            Logger.error(LogCategory.AUTH, 'Firebase authentication failed, continuing with local auth', { 
+              error: fbError
+            });
+          }
+        } else {
+          // Update username in Firebase if we're in edit mode
+          try {
+            await firebaseAuthAdapter.updateUserInfo({ username });
+          } catch (fbError) {
+            Logger.error(LogCategory.AUTH, 'Failed to update username in Firebase', { 
+              error: fbError
+            });
+          }
+        }
         
-        // Navigate to main app dashboard
-        navigation.reset({
-          index: 0,
-          routes: [{ name: 'MainTabs' }],
-        });
+        // Log completion
+        Logger.info(LogCategory.AUTH, `User ${isEdit ? 'updated' : 'setup completed'}`, { username });
+        
+        // Navigate based on mode
+        if (isEdit) {
+          // Return to previous screen
+          navigation.goBack();
+        } else {
+          // Navigate to main app dashboard for new users
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'MainTabs' }],
+          });
+        }
       }, LogCategory.AUTH, 'user setup', true);
     } catch (error) {
       // Error is already logged by tryCatch
@@ -68,10 +110,13 @@ const UserSetup = ({ navigation }) => {
   return (
     <View style={styles.container}>
       <View style={styles.contentContainer}>
-        <Text h3 style={styles.title}>Create Username</Text>
+        <Text h3 style={styles.title}>
+          {isEdit ? 'Change Username' : 'Create Username'}
+        </Text>
         <Text style={styles.subtitle}>
-          Choose a username for your cannabis journey.
-          This will be used to track your points and achievements.
+          {isEdit 
+            ? 'Update your username for your cannabis journey.'
+            : 'Choose a username for your cannabis journey. This will be used to track your points and achievements.'}
         </Text>
 
         <View style={styles.inputContainer}>
@@ -101,7 +146,7 @@ const UserSetup = ({ navigation }) => {
         </View>
 
         <Button
-          title="Continue"
+          title={isEdit ? "Update" : "Continue"}
           onPress={handleSubmit}
           loading={isLoading}
           disabled={isLoading || !username.trim()}
