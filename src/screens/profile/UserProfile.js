@@ -88,15 +88,13 @@ const UserProfile = ({ navigation }) => {
             setIsLoading(true);
             try {
               await tryCatch(async () => {
-                // Log out from Firebase if using it
-                if (serviceProvider.isUsingFirebase()) {
-                  try {
-                    await serviceProvider.logout();
-                    Logger.info(LogCategory.AUTH, 'User logged out from Firebase');
-                  } catch (fbError) {
-                    Logger.error(LogCategory.AUTH, 'Error logging out from Firebase', { fbError });
-                    // Continue with local logout regardless
-                  }
+                // Log out from Firebase
+                try {
+                  await serviceProvider.logout();
+                  Logger.info(LogCategory.AUTH, 'User logged out from Firebase');
+                } catch (fbError) {
+                  Logger.error(LogCategory.AUTH, 'Error logging out from Firebase', { fbError });
+                  // Continue with local logout regardless
                 }
                 
                 // Clear age verification flag

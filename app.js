@@ -100,8 +100,6 @@ const AppContent = () => {
       try {
         // Initialize Firebase and services
         const initResult = await appInitializer.initialize({
-          useFirebase: __DEV__ ? false : true, // Use mock data in dev, Firebase in prod by default
-          migrateData: __DEV__, // Only attempt migration in dev mode
           onAuthChange: (user) => {
             // Update auth state when Firebase auth changes
             setAuthUser(user);

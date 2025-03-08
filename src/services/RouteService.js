@@ -5,7 +5,7 @@ import { Logger, LogCategory } from './LoggingService';
 import { tryCatch } from '../utils/ErrorHandler';
 import locationService from './LocationService';
 import env from '../config/env';
-import { getAllVendors } from './MockDataService';
+import { getAllVendors } from './ServiceProvider';
 import redemptionService from './RedemptionService';
 
 /**

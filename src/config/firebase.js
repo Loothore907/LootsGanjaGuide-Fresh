@@ -10,24 +10,32 @@ import ENV from './env';
 // Firebase configuration
 // Using environment variables from ENV
 const firebaseConfig = {
-  apiKey: ENV.FIREBASE_API_KEY || "YOUR_API_KEY",
-  authDomain: ENV.FIREBASE_AUTH_DOMAIN || "YOUR_AUTH_DOMAIN.firebaseapp.com",
-  projectId: ENV.FIREBASE_PROJECT_ID || "YOUR_PROJECT_ID",
-  storageBucket: ENV.FIREBASE_STORAGE_BUCKET || "YOUR_STORAGE_BUCKET.appspot.com",
-  messagingSenderId: ENV.FIREBASE_MESSAGING_SENDER_ID || "YOUR_MESSAGING_SENDER_ID",
-  appId: ENV.FIREBASE_APP_ID || "YOUR_APP_ID",
-  measurementId: ENV.FIREBASE_MEASUREMENT_ID || "YOUR_MEASUREMENT_ID"
+  apiKey: ENV.FIREBASE_API_KEY,
+  authDomain: ENV.FIREBASE_AUTH_DOMAIN,
+  projectId: ENV.FIREBASE_PROJECT_ID,
+  storageBucket: ENV.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: ENV.FIREBASE_MESSAGING_SENDER_ID,
+  appId: ENV.FIREBASE_APP_ID,
+  measurementId: ENV.FIREBASE_MEASUREMENT_ID
 };
+
+// Log the configuration for debugging (remove in production)
+if (__DEV__) {
+  Logger.debug(LogCategory.AUTH, 'Firebase config', {
+    apiKey: firebaseConfig.apiKey ? 'SET' : 'NOT SET',
+    authDomain: firebaseConfig.authDomain ? 'SET' : 'NOT SET',
+    projectId: firebaseConfig.projectId ? 'SET' : 'NOT SET',
+    appId: firebaseConfig.appId ? 'SET' : 'NOT SET',
+  });
+}
 
 // Flag to check if Firebase config is valid
 export const hasValidFirebaseConfig = () => {
   const requiredFields = ['apiKey', 'authDomain', 'projectId', 'appId'];
   
   for (const field of requiredFields) {
-    // Check if the field is missing or has placeholder values
-    if (!firebaseConfig[field] || 
-        firebaseConfig[field] === `YOUR_${field.toUpperCase()}` ||
-        firebaseConfig[field].includes('YOUR_')) {
+    // Check if the field is missing or empty
+    if (!firebaseConfig[field]) {
       Logger.warn(LogCategory.AUTH, `Firebase config missing required field: ${field}`);
       return false;
     }

@@ -33,6 +33,8 @@
     "expo-blur": "~14.0.3",
     "expo-camera": "^16.0.17",
     "expo-constants": "~17.0.7",
+    "expo-document-picker": "^13.0.3",
+    "expo-file-system": "^18.0.11",
     "expo-font": "~13.0.4",
     "expo-haptics": "~14.0.1",
     "expo-linking": "~7.0.5",

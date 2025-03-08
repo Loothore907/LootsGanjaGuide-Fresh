@@ -21,7 +21,7 @@ import { StatusBar } from 'expo-status-bar';
 import routeService from '../../services/RouteService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import redemptionService from '../../services/RedemptionService';
-import { getAllVendors, getFeaturedDeals, getRecentVendors } from '../../services/MockDataService';
+import { getAllVendors, getFeaturedDeals, getRecentVendors } from '../../services/ServiceProvider';
 
 const { width } = Dimensions.get('window');
 

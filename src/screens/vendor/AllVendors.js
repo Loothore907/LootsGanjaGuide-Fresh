@@ -20,7 +20,7 @@ import { useAppState, AppActions } from '../../context/AppStateContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
-import { getAllVendors } from '../../services/MockDataService';
+import { getAllVendors } from '../../services/ServiceProvider';
 
 const AllVendors = ({ route, navigation }) => {
   const { state } = useAppState();

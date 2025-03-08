@@ -57,7 +57,7 @@ import { useAppState, AppActions } from '../../context/AppStateContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
-import { checkInAtVendor, getVendorById } from '../../services/MockDataService';
+import { checkInAtVendor, getVendorById } from '../../services/ServiceProvider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import redemptionService from '../../services/RedemptionService';
 import locationService from '../../services/LocationService';

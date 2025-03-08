@@ -14,7 +14,7 @@ import { useAppState, AppActions } from '../../context/AppStateContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
-import { getSpecialDeals, createOptimizedRoute } from '../../services/MockDataService';
+import { getSpecialDeals, createOptimizedRoute } from '../../services/ServiceProvider';
 
 const SpecialDeals = ({ navigation }) => {
   const { state, dispatch } = useAppState();
