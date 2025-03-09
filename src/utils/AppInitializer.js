@@ -113,14 +113,14 @@ class AppInitializer {
     try {
       // Start loading data in parallel
       const preloadTasks = [
-        // Preload featured deals
-        serviceProvider.getFeaturedDeals().catch(err => {
+        // Preload featured deals - increase limit to 20
+        serviceProvider.getFeaturedDeals({ limit: 20 }).catch(err => {
           Logger.warn(LogCategory.DEALS, 'Failed to preload featured deals', { err });
           return [];
         }),
         
-        // Preload vendors
-        serviceProvider.getAllVendors({ limit: 10 }).catch(err => {
+        // Preload vendors - remove limit to get all vendors
+        serviceProvider.getAllVendors().catch(err => {
           Logger.warn(LogCategory.VENDORS, 'Failed to preload vendors', { err });
           return [];
         })

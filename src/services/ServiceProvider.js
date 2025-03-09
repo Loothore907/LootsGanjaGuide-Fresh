@@ -59,6 +59,7 @@ class ServiceProvider {
       }
       
       // Try a simple query to verify connection
+      // Using limit: 1 is appropriate here since we're just checking connectivity
       const testQuery = await this.vendorRepository.getAll({ limit: 1 });
       Logger.info(LogCategory.GENERAL, 'Firebase connection verified', { success: true });
       return true;

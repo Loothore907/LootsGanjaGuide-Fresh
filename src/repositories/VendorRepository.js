@@ -8,7 +8,7 @@ import {
   where, 
   getDocs, 
   orderBy, 
-  limit, 
+  limit as firestoreLimit, 
   startAfter,
   getDoc,
   doc,
@@ -16,7 +16,9 @@ import {
   arrayUnion,
   arrayRemove,
   GeoPoint,
-  runTransaction
+  runTransaction,
+  setDoc,
+  addDoc
 } from 'firebase/firestore';
 import { isValidVendor } from '../types/Schema';
 
@@ -30,120 +32,262 @@ class VendorRepository extends BaseRepository {
   }
 
   /**
-   * Get all vendors with optional filtering
+   * Get all vendors with adaptive schema handling
    * @param {Object} options - Filter options
-   * @param {number} options.maxDistance - Maximum distance in miles
-   * @param {string} options.dealType - Type of deal (birthday, daily, special)
-   * @param {string} options.day - Day of week for daily deals
-   * @param {boolean} options.isPartner - Filter by partner status
-   * @param {number} options.limit - Maximum number of results
-   * @param {number} options.offset - Offset for pagination
-   * @param {string} options.sortBy - Field to sort by
-   * @param {string} options.sortDirection - Sort direction (asc or desc)
-   * @param {Object} options.userLocation - User's location coordinates
    * @returns {Promise<Array>} - Array of vendors
    */
   async getAll(options = {}) {
     try {
       Logger.info(LogCategory.VENDORS, 'Getting all vendors', { options });
       
-      // Build base query
+      // STEP 1: Build initial query - limit fields where possible for performance
       let q = this.collectionRef;
       
-      // Apply isPartner filter if specified
+      // Add preliminary filters where we know the schema
       if (options.isPartner !== undefined) {
         q = query(q, where('isPartner', '==', options.isPartner));
       }
       
-      // Apply deal type filters
-      if (options.dealType) {
-        switch (options.dealType) {
-          case 'birthday':
-            q = query(q, where('deals.birthday', '!=', null));
-            break;
-          case 'daily':
-            if (options.day) {
-              q = query(q, where(`deals.daily.${options.day}`, '!=', null));
-            } else {
-              q = query(q, where('deals.daily', '!=', null));
-            }
-            break;
-          case 'special':
-            q = query(q, where('deals.special', '!=', null));
-            break;
-        }
+      // Checking status field (based on screenshot showing "Active-Operating")
+      if (options.activeRegionsOnly !== false) {
+        q = query(q, where('status', '==', 'Active-Operating'));
       }
       
-      // Apply sorting
-      if (options.sortBy) {
-        const direction = options.sortDirection === 'desc' ? 'desc' : 'asc';
-        q = query(q, orderBy(options.sortBy, direction));
-      } else {
-        // Default sorting: partners first, then by name
-        q = query(q, orderBy('isPartner', 'desc'), orderBy('name', 'asc'));
-      }
-      
-      // Apply pagination
-      if (options.limit && options.limit > 0) {
-        q = query(q, limit(options.limit));
-      }
-      
-      if (options.offset && options.offset > 0 && options.lastVisible) {
-        q = query(q, startAfter(options.lastVisible));
-      }
-      
-      // Execute query
+      // STEP 2: Execute query
       const querySnapshot = await getDocs(q);
-      const vendors = [];
+      let allVendors = [];
       
-      // Process results
+      // STEP 3: Process each vendor and normalize schema
       querySnapshot.forEach(doc => {
-        const vendor = { id: doc.id, ...doc.data() };
-        
-        // Normalize data (convert Firestore timestamps to ISO strings)
-        const normalized = this.normalizeTimestamps(vendor);
-        
-        // Calculate distance if user location provided
-        if (options.userLocation && normalized.location && normalized.location.coordinates) {
-          normalized.distance = this.calculateDistance(
-            options.userLocation.latitude,
-            options.userLocation.longitude,
-            normalized.location.coordinates.latitude,
-            normalized.location.coordinates.longitude
-          );
-        }
-        
-        // Filter by max distance if provided
-        if (options.maxDistance && normalized.distance && normalized.distance > options.maxDistance) {
-          return; // Skip this vendor if too far
-        }
-        
-        // Validate vendor structure
-        if (isValidVendor(normalized)) {
-          vendors.push(normalized);
-        } else {
-          Logger.warn(LogCategory.VENDORS, `Invalid vendor data structure found for ${doc.id}`);
+        try {
+          const rawVendor = { id: doc.id, ...doc.data() };
+          
+          // Log the first vendor structure for debugging
+          if (allVendors.length === 0) {
+            Logger.debug(LogCategory.VENDORS, 'First vendor structure:', {
+              id: rawVendor.id,
+              hasStatus: !!rawVendor.status,
+              status: rawVendor.status,
+              hasCoordinates: !!(rawVendor.location && rawVendor.location.coordinates),
+              coordinatesStructure: rawVendor.location && rawVendor.location.coordinates ? 
+                                  'nested' : 
+                                  (rawVendor.location && typeof rawVendor.location.latitude === 'number' ? 
+                                  'flat' : 'unknown')
+            });
+          }
+          
+          // Normalize vendor to match expected schema
+          const normalizedVendor = this.normalizeVendorSchema(rawVendor);
+          
+          // Add to results
+          allVendors.push(normalizedVendor);
+        } catch (vendorError) {
+          Logger.warn(LogCategory.VENDORS, `Error normalizing vendor ${doc.id}`, { error: vendorError });
         }
       });
       
-      // Post-query sorting by distance if available
+      // STEP 4: Apply additional filters based on normalized data
+      let filteredVendors = [...allVendors];
+      
+      // Apply region filtering based on address/zip code
+      if (options.activeRegionsOnly !== false) {
+        // Our screenshot shows no "region" field, but we can use zip code filtering from region.js
+        filteredVendors = allVendors.filter(vendor => {
+          // Consider active if status is "Active-Operating"
+          if (vendor.status === 'Active-Operating') {
+            return true;
+          }
+          
+          // Extract zip code from address and check if it's in Anchorage
+          if (vendor.location && vendor.location.address) {
+            const zipCode = this.extractZipCodeFromAddress(vendor.location.address);
+            if (zipCode) {
+              // Anchorage zip codes range from 99501 to 99524
+              const numericZip = parseInt(zipCode);
+              if (numericZip >= 99501 && numericZip <= 99524) {
+                return true;
+              }
+            }
+            
+            // Check if address contains "Anchorage"
+            if (vendor.location.address.includes('Anchorage')) {
+              return true;
+            }
+          }
+          
+          // Default to include in dev mode
+          return __DEV__;
+        });
+      }
+      
+      // Apply deal type filters
+      if (options.dealType) {
+        filteredVendors = filteredVendors.filter(vendor => {
+          const deals = vendor.deals || {};
+          
+          switch (options.dealType) {
+            case 'birthday':
+              return !!deals.birthday;
+            case 'daily':
+              if (options.day) {
+                return deals.daily && deals.daily[options.day] && 
+                       Array.isArray(deals.daily[options.day]) && 
+                       deals.daily[options.day].length > 0;
+              } else {
+                return !!deals.daily && Object.keys(deals.daily).length > 0;
+              }
+            case 'special':
+              return Array.isArray(deals.special) && deals.special.length > 0;
+            default:
+              return false;
+          }
+        });
+      }
+      
+      // Add distance calculations
       if (options.userLocation) {
-        vendors.sort((a, b) => {
-          // Partners first
+        filteredVendors = filteredVendors.map(vendor => {
+          const coords = vendor.location && vendor.location.coordinates;
+          if (coords && typeof coords.latitude === 'number' && typeof coords.longitude === 'number') {
+            vendor.distance = this.calculateDistance(
+              options.userLocation.latitude,
+              options.userLocation.longitude,
+              coords.latitude,
+              coords.longitude
+            );
+          }
+          return vendor;
+        });
+        
+        // Filter by maximum distance
+        if (options.maxDistance) {
+          filteredVendors = filteredVendors.filter(vendor => 
+            !vendor.distance || vendor.distance <= options.maxDistance
+          );
+        }
+        
+        // Sort by distance with partners first
+        filteredVendors.sort((a, b) => {
           if (a.isPartner && !b.isPartner) return -1;
           if (!a.isPartner && b.isPartner) return 1;
-          
-          // Then by distance
           return (a.distance || Infinity) - (b.distance || Infinity);
         });
       }
       
-      Logger.info(LogCategory.VENDORS, `Found ${vendors.length} vendors`);
-      return vendors;
+      // Apply limit if specified
+      if (options.limit && options.limit > 0) {
+        filteredVendors = filteredVendors.slice(0, options.limit);
+      }
+      
+      Logger.info(LogCategory.VENDORS, `Found ${filteredVendors.length} vendors out of ${allVendors.length} total`);
+      return filteredVendors;
     } catch (error) {
       Logger.error(LogCategory.VENDORS, 'Error getting vendors', { error });
       throw error;
     }
+  }
+
+  /**
+   * Extract zip code from address string (copied from your region.js)
+   * @param {string} address - Address string
+   * @returns {string|null} - Zip code or null
+   */
+  extractZipCodeFromAddress(address) {
+    if (!address) return null;
+    
+    // Look for 5-digit zip code with possible 4-digit extension
+    const zipMatch = address.match(/\b(\d{5})(?:-\d{4})?\b/);
+    return zipMatch ? zipMatch[1] : null;
+  }
+
+  /**
+   * Normalize vendor schema to match expected structure
+   * @param {Object} rawVendor - Vendor object from Firestore
+   * @returns {Object} - Normalized vendor object
+   */
+  normalizeVendorSchema(rawVendor) {
+    // Create a deep copy to avoid mutating the original
+    const vendor = JSON.parse(JSON.stringify(rawVendor));
+    
+    // Normalize timestamps
+    const normalized = this.normalizeTimestamps(vendor);
+    
+    // Fix location structure - note we're handling coordinates properly here
+    // According to screenshot, coordinates appear to be nested
+    if (normalized.location) {
+      // Ensure coordinates are properly structured
+      if (!normalized.location.coordinates) {
+        // If we don't have a coordinates object but have lat/lng on location directly
+        if (typeof normalized.location.latitude === 'number' && 
+            typeof normalized.location.longitude === 'number') {
+            
+          normalized.location.coordinates = {
+            latitude: normalized.location.latitude,
+            longitude: normalized.location.longitude
+          };
+          
+          // Clean up original properties
+          delete normalized.location.latitude;
+          delete normalized.location.longitude;
+        }
+      }
+      
+      // Ensure address exists
+      if (!normalized.location.address && normalized.location.formattedAddress) {
+        normalized.location.address = normalized.location.formattedAddress;
+      }
+    } else {
+      // Create empty location if missing
+      normalized.location = {
+        address: 'Address not available',
+        coordinates: {
+          latitude: 61.2181,  // Default to Anchorage
+          longitude: -149.9003
+        }
+      };
+    }
+    
+    // Ensure contact structure - contact model matches screenshot
+    if (!normalized.contact) {
+      normalized.contact = {
+        phone: '',
+        email: '',
+        social: {
+          instagram: '',
+          facebook: ''
+        }
+      };
+    } else if (!normalized.contact.social) {
+      normalized.contact.social = {
+        instagram: '',
+        facebook: ''
+      };
+    }
+    
+    // Ensure hours structure
+    if (!normalized.hours) {
+      normalized.hours = {};
+    }
+    
+    // Ensure deals structure
+    if (!normalized.deals) {
+      normalized.deals = {
+        daily: {},
+        special: []
+      };
+    } else {
+      // Make sure daily deals object exists
+      if (!normalized.deals.daily) {
+        normalized.deals.daily = {};
+      }
+      
+      // Make sure special deals array exists
+      if (!normalized.deals.special) {
+        normalized.deals.special = [];
+      }
+    }
+    
+    return normalized;
   }
 
   /**

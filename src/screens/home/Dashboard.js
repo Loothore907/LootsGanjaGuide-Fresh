@@ -21,14 +21,13 @@ import { StatusBar } from 'expo-status-bar';
 import routeService from '../../services/RouteService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import redemptionService from '../../services/RedemptionService';
-import { getAllVendors, getFeaturedDeals, getRecentVendors } from '../../services/ServiceProvider';
+import serviceProvider from '../../services/ServiceProvider';
 
 const { width } = Dimensions.get('window');
 
 const Dashboard = ({ navigation }) => {
   const { state, dispatch } = useAppState();
   const [refreshing, setRefreshing] = useState(false);
-  const [featuredDeals, setFeaturedDeals] = useState([]);
   const [recentVendors, setRecentVendors] = useState([]);
   const [activeJourney, setActiveJourney] = useState(null);
   const [metrics, setMetrics] = useState({
@@ -42,11 +41,12 @@ const Dashboard = ({ navigation }) => {
   const [birthdayAvailable, setBirthdayAvailable] = useState(false);
   const [dailyAvailable, setDailyAvailable] = useState(false);
   const [specialAvailable, setSpecialAvailable] = useState(false);
+  const [error, setError] = useState(null);
   
   // Load data on component mount
   useEffect(() => {
-    loadDashboardData();
-    loadVendors();
+    loadData();
+    checkForActiveJourney();
   }, []);
   
   // Load metrics in useEffect
@@ -59,75 +59,192 @@ const Dashboard = ({ navigation }) => {
     loadMetrics();
   }, []);
   
-  // Modified useEffect that loads journey data
-  useEffect(() => {
-    const checkForActiveJourney = async () => {
-      try {
-        // Check if there's an active journey in AsyncStorage
-        const storedJourney = await AsyncStorage.getItem('current_journey');
+  // Check for active journey
+  const checkForActiveJourney = async () => {
+    try {
+      // Check if there's an active journey in AsyncStorage
+      const storedJourney = await AsyncStorage.getItem('current_journey');
+      
+      if (storedJourney) {
+        const journey = JSON.parse(storedJourney);
         
-        if (storedJourney) {
-          const journey = JSON.parse(storedJourney);
+        // Verify journey is valid and not completed
+        if (journey && !journey.completedAt) {
+          // Check if journey is expired (optional)
+          const journeyDate = new Date(journey.createdAt);
+          const now = new Date();
+          const journeyAge = now - journeyDate;
+          const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
           
-          // Verify journey is valid and not completed
-          if (journey && !journey.completedAt) {
-            // Check if journey is expired (optional)
-            const journeyDate = new Date(journey.createdAt);
-            const now = new Date();
-            const journeyAge = now - journeyDate;
-            const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-            
-            if (journeyAge <= ONE_DAY) {
-              // Journey is valid and not expired
-              setActiveJourney({
-                dealType: journey.dealType,
-                progress: `${journey.currentVendorIndex + 1}/${journey.totalVendors}`,
-                currentVendor: journey.vendors[journey.currentVendorIndex]
-              });
-              return;
-            }
+          if (journeyAge <= ONE_DAY) {
+            // Journey is valid and not expired
+            setActiveJourney({
+              dealType: journey.dealType,
+              progress: `${journey.currentVendorIndex + 1}/${journey.totalVendors}`,
+              currentVendor: journey.vendors[journey.currentVendorIndex]
+            });
+            return;
           }
         }
-        
-        // No valid journey found, ensure activeJourney is null
-        setActiveJourney(null);
-      } catch (error) {
-        Logger.error(LogCategory.JOURNEY, 'Error checking for active journey', { error });
-        setActiveJourney(null);
       }
-    };
-    
-    checkForActiveJourney();
+      
+      // No valid journey found, ensure activeJourney is null
+      setActiveJourney(null);
+    } catch (error) {
+      Logger.error(LogCategory.JOURNEY, 'Error checking for active journey', { error });
+      setActiveJourney(null);
+    }
+  };
+  
+  // Modified useEffect that loads journey data
+  useEffect(() => {
+    // Initial check for active journey is now handled by the function above
+    // This useEffect can be used for other journey-related tasks if needed
   }, []);
   
-  const loadDashboardData = async () => {
-    setRefreshing(true);
+  // Load all dashboard data
+  const loadData = async () => {
+    setIsLoading(true);
+    setError(null);
+    
     try {
       await tryCatch(async () => {
-        // Get featured deals
-        const deals = await getFeaturedDeals();
-        setFeaturedDeals(deals);
+        // Skip featured deals - remove this section
+        // let featuredDeals = [];
+        // try {
+        //   featuredDeals = await serviceProvider.getFeaturedDeals({ limit: 20 });
+        //   Logger.info(LogCategory.DEALS, 'Loaded featured deals', { count: featuredDeals.length });
+        // } catch (dealsError) {
+        //   Logger.error(LogCategory.DEALS, 'Error getting featured deals', { error: dealsError });
+        //   // Continue with empty deals array rather than failing completely
+        // }
         
-        // Get recent vendors
-        const vendors = await getRecentVendors();
-        setRecentVendors(vendors);
+        // Focus on getting vendors only with active status filtering
+        let vendors = [];
+        try {
+          vendors = await serviceProvider.getAllVendors({ 
+            limit: 10,
+            activeRegionsOnly: true
+          });
+          Logger.info(LogCategory.VENDORS, 'Loaded vendors for dashboard', { count: vendors.length });
+        } catch (vendorsError) {
+          Logger.error(LogCategory.VENDORS, 'Error getting vendors', { error: vendorsError });
+          // Continue with empty vendors array
+        }
+        
+        // Get user's recent visits
+        let recentVendors = [];
+        try {
+          recentVendors = await serviceProvider.getRecentVendors(10);
+          Logger.info(LogCategory.VENDORS, 'Loaded recent vendors', { count: recentVendors.length });
+        } catch (recentError) {
+          Logger.error(LogCategory.VENDORS, 'Error getting recent vendors', { error: recentError });
+          // Continue with empty recent vendors array
+        }
+        
+        // Get favorites - safely
+        let favorites = [];
+        try {
+          favorites = await serviceProvider.getFavorites();
+        } catch (favoritesError) {
+          Logger.error(LogCategory.VENDORS, 'Error getting favorites', { error: favoritesError });
+          // Use favorites from state as fallback
+          favorites = state.user.favorites.map(id => {
+            const vendor = vendors.find(v => v.id === id);
+            return vendor || { id };
+          }).filter(v => v.name); // Filter out any that don't have a name
+        }
         
         // Refresh metrics
-        const stats = await redemptionService.getRedemptionStats();
+        let stats = {
+          today: { count: 0, uniqueVendors: 0 },
+          total: { count: 0, uniqueVendors: 0 }
+        };
+        
+        try {
+          stats = await redemptionService.getRedemptionStats();
+        } catch (statsError) {
+          Logger.error(LogCategory.REDEMPTION, 'Error getting redemption stats', { error: statsError });
+          // Continue with default stats
+        }
+        
+        // Check for available deals
+        let birthdayDeals = 0;
+        let dailyDeals = 0;
+        let specialDeals = 0;
+        
+        try {
+          // Count birthday deals from vendors with birthday deals
+          birthdayDeals = vendors.filter(vendor => 
+            vendor.deals && 
+            vendor.deals.birthday && 
+            vendor.status === "Active-Operating"
+          ).length;
+          
+          // Count daily deals from vendors with daily deals for today
+          const today = getCurrentDayOfWeek();
+          dailyDeals = vendors.filter(vendor => 
+            vendor.deals && 
+            vendor.deals.daily && 
+            vendor.deals.daily[today] && 
+            vendor.deals.daily[today].length > 0 &&
+            vendor.status === "Active-Operating"
+          ).length;
+          
+          // Count special deals from vendors with active special deals
+          specialDeals = vendors.filter(vendor => 
+            vendor.deals && 
+            vendor.deals.special && 
+            vendor.deals.special.length > 0 &&
+            vendor.status === "Active-Operating"
+          ).length;
+          
+          Logger.info(LogCategory.DEALS, 'Deal availability checked', {
+            birthdayCount: birthdayDeals,
+            dailyCount: dailyDeals,
+            specialCount: specialDeals
+          });
+        } catch (countError) {
+          Logger.error(LogCategory.DEALS, 'Error counting available deals', { error: countError });
+        }
+        
+        // Update state with all loaded data - remove featuredDeals
+        // setFeaturedDeals(featuredDeals); <- Remove this
+        setVendors(vendors);
+        setRecentVendors(recentVendors);
         setMetrics(stats);
+        setBirthdayAvailable(birthdayDeals > 0);
+        setDailyAvailable(dailyDeals > 0);
+        setSpecialAvailable(specialDeals > 0);
+        
+        // Store vendor data in global state for reuse
+        if (vendors.length > 0) {
+          dispatch(AppActions.updateVendorData(vendors));
+        }
         
         Logger.info(LogCategory.GENERAL, 'Dashboard data loaded successfully');
-      }, LogCategory.GENERAL, 'loading dashboard data', false);
+      }, LogCategory.GENERAL, 'loading dashboard data', true);
     } catch (error) {
       // Error already logged by tryCatch
+      setError('Failed to load dashboard data. Please try again.');
     } finally {
+      setIsLoading(false);
       setRefreshing(false);
     }
   };
   
+  // Helper function to get the current day of the week
+  const getCurrentDayOfWeek = () => {
+    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const today = new Date().getDay();
+    return days[today];
+  };
+  
+  // Handle pull-to-refresh
   const onRefresh = () => {
-    loadDashboardData();
-    // We don't need to call checkForActiveJourney here as it's handled by the useEffect
+    setRefreshing(true);
+    loadData();
+    checkForActiveJourney();
   };
   
   const navigateToDealType = (dealType) => {
@@ -164,29 +281,6 @@ const Dashboard = ({ navigation }) => {
     </TouchableOpacity>
   );
   
-  const renderFeaturedDeal = ({ item }) => (
-    <TouchableOpacity 
-      style={styles.featuredDealCard}
-      onPress={() => navigateToVendorProfile(item.vendorId)}
-    >
-      <Image 
-        source={{ uri: item.imageUrl }} 
-        style={styles.dealImage}
-        resizeMode="cover"
-      />
-      <View style={styles.dealOverlay}>
-        <View style={styles.dealBadge}>
-          <Text style={styles.dealBadgeText}>{item.discount}</Text>
-        </View>
-      </View>
-      <View style={styles.dealCardContent}>
-        <Text style={styles.dealTitle}>{item.title}</Text>
-        <Text style={styles.dealVendor}>{item.vendorName}</Text>
-        <Text style={styles.dealDescription}>{item.description}</Text>
-      </View>
-    </TouchableOpacity>
-  );
-  
   const renderRecentVendor = ({ item }) => (
     <TouchableOpacity 
       style={styles.recentVendorCard}
@@ -205,90 +299,33 @@ const Dashboard = ({ navigation }) => {
     </TouchableOpacity>
   );
   
-  // Load vendors and check availability
-  const loadVendors = async () => {
-    setIsLoading(true);
-    try {
-      const allVendors = await getAllVendors();
-      setVendors(allVendors);
-      
-      // Check availability of different deal types
-      checkDealAvailability(allVendors);
-    } catch (error) {
-      Logger.error(LogCategory.VENDOR, 'Error loading vendors', { error });
-      Alert.alert('Error', 'Failed to load dispensary data. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  
-  // Check which deal types are available
-  const checkDealAvailability = async (vendorList) => {
-    // Birthday deals
-    const birthdayDealVendors = vendorList.filter(vendor => 
-      vendor.deals?.birthday && Object.keys(vendor.deals.birthday).length > 0
-    );
-    
-    // Daily deals - check for today
-    const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const today = daysOfWeek[new Date().getDay()];
-    const dailyDealVendors = vendorList.filter(vendor => 
-      vendor.deals?.daily && 
-      vendor.deals.daily[today] && 
-      vendor.deals.daily[today].length > 0
-    );
-    
-    // Special deals - check if active
-    const now = new Date();
-    const specialDealVendors = vendorList.filter(vendor => 
-      vendor.deals?.special && 
-      vendor.deals.special.some(deal => {
-        const startDate = new Date(deal.startDate);
-        const endDate = new Date(deal.endDate);
-        return now >= startDate && now <= endDate;
-      })
-    );
-    
-    // Apply redemption filtering
-    const redeemableBirthday = await filterRedeemableVendors(birthdayDealVendors, 'birthday');
-    const redeemableDaily = await filterRedeemableVendors(dailyDealVendors, 'daily');
-    const redeemableSpecial = await filterRedeemableVendors(specialDealVendors, 'special');
-    
-    // Update state
-    setBirthdayAvailable(redeemableBirthday.length > 0);
-    setDailyAvailable(redeemableDaily.length > 0);
-    setSpecialAvailable(redeemableSpecial.length > 0);
-    
-    Logger.info(LogCategory.DEAL, 'Deal availability checked', {
-      birthdayCount: redeemableBirthday.length,
-      dailyCount: redeemableDaily.length,
-      specialCount: redeemableSpecial.length
-    });
-  };
-  
-  // Filter vendors by redemption status
-  const filterRedeemableVendors = async (vendorList, dealType) => {
-    if (!vendorList || vendorList.length === 0) {
-      return [];
-    }
-    
-    const redeemableVendors = [];
-    for (const vendor of vendorList) {
-      const canRedeem = await redemptionService.canRedeemDeal(vendor.id, dealType);
-      if (canRedeem) {
-        redeemableVendors.push(vendor);
-      }
-    }
-    
-    return redeemableVendors;
-  };
-  
   // Handle journey selection
   const handleSelectJourney = (dealType) => {
-    // Navigate to journey settings
-    navigation.navigate('JourneySettings', { dealType });
+    // Check if there are vendors with this deal type
+    let hasDeals = false;
     
-    Logger.info(LogCategory.JOURNEY, 'Journey type selected', { dealType });
+    switch (dealType) {
+      case 'birthday':
+        hasDeals = birthdayAvailable;
+        break;
+      case 'daily':
+        hasDeals = dailyAvailable;
+        break;
+      case 'special':
+        hasDeals = specialAvailable;
+        break;
+    }
+    
+    if (!hasDeals) {
+      Alert.alert(
+        'No Deals Available',
+        `Sorry, there are no ${dealType} deals available right now.`
+      );
+      return;
+    }
+    
+    // Navigate to journey planner
+    navigation.navigate('JourneyPlanner', { dealType });
   };
   
   // Handle single vendor visit (for daily and special deals)
@@ -304,7 +341,7 @@ const Dashboard = ({ navigation }) => {
   
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar style="auto" />
+      <StatusBar style="light" />
       
       <View style={styles.header}>
         <View>
@@ -320,9 +357,35 @@ const Dashboard = ({ navigation }) => {
       <ScrollView
         style={styles.scrollView}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={['#2196F3']}
+          />
         }
       >
+        {/* Error message if data loading failed */}
+        {error && (
+          <View style={styles.errorContainer}>
+            <Icon name="error-outline" type="material" size={24} color="#F44336" />
+            <Text style={styles.errorText}>{error}</Text>
+            <Button
+              title="Try Again"
+              onPress={loadData}
+              buttonStyle={styles.retryButton}
+              titleStyle={styles.retryButtonText}
+            />
+          </View>
+        )}
+        
+        {/* Loading indicator */}
+        {isLoading && (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#2196F3" />
+            <Text style={styles.loadingText}>Loading deals...</Text>
+          </View>
+        )}
+        
         {/* Activity Metrics */}
         <View style={styles.metricsContainer}>
           <Text style={styles.metricsTitle}>Today's Activity</Text>
@@ -433,7 +496,7 @@ const Dashboard = ({ navigation }) => {
         </View>
         
         {/* Featured Deals Section */}
-        <View style={styles.sectionContainer}>
+        {/* <View style={styles.sectionContainer}>
           <View style={styles.sectionTitleRow}>
             <Text style={styles.sectionTitle}>Featured Deals</Text>
             <TouchableOpacity onPress={() => navigation.navigate('AllDeals')}>
@@ -452,7 +515,7 @@ const Dashboard = ({ navigation }) => {
               <Text style={styles.emptyListText}>No featured deals available</Text>
             }
           />
-        </View>
+        </View> */}
         
         {/* Recent Vendors Section */}
         <View style={styles.sectionContainer}>
@@ -939,6 +1002,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
     color: '#333333',
+  },
+  errorContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  errorText: {
+    color: '#F44336',
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: '#4CAF50',
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+  },
+  loadingContainer: {
+    padding: 20,
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#2196F3',
+    marginTop: 10,
   },
 });
 
