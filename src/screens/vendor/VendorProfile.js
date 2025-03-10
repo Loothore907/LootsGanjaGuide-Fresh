@@ -26,7 +26,7 @@ import { useAppState, AppActions } from '../../context/AppStateContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
-import { getVendorById } from '../../services/ServiceProvider';
+import serviceProvider from '../../services/ServiceProvider';
 
 const VendorProfile = ({ route, navigation }) => {
   const { vendorId } = route.params;
@@ -54,10 +54,16 @@ const VendorProfile = ({ route, navigation }) => {
     
     try {
       await tryCatch(async () => {
-        const vendorData = await getVendorById(vendorId);
+        // Use serviceProvider instead of direct calls
+        const vendorData = await serviceProvider.getVendorById(vendorId);
+        
+        if (!vendorData) {
+          throw new Error(`Vendor with ID ${vendorId} not found`);
+        }
+        
         setVendor(vendorData);
         
-        // Add to recent visits
+        // Add to recent visits - only if we have a valid vendor
         const visit = {
           vendorId: vendorData.id,
           vendorName: vendorData.name,
@@ -92,10 +98,25 @@ const VendorProfile = ({ route, navigation }) => {
   };
   
   const openMaps = () => {
-    if (!vendor) return;
+    if (!vendor || !vendor.location || !vendor.location.coordinates) {
+      Logger.warn(LogCategory.NAVIGATION, 'Cannot open maps - missing vendor coordinates', { vendorId });
+      alert('Location coordinates not available for this vendor.');
+      return;
+    }
     
     const { latitude, longitude } = vendor.location.coordinates;
-    const label = encodeURIComponent(vendor.name);
+    
+    // Validate coordinates
+    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+      Logger.warn(LogCategory.NAVIGATION, 'Invalid coordinates for vendor', { 
+        vendorId, 
+        coordinates: vendor.location.coordinates 
+      });
+      alert('Invalid location coordinates for this vendor.');
+      return;
+    }
+    
+    const label = encodeURIComponent(vendor.name || 'Vendor');
     const scheme = Platform.select({
       ios: 'maps:0,0?q=',
       android: 'geo:0,0?q='
@@ -113,9 +134,19 @@ const VendorProfile = ({ route, navigation }) => {
   };
   
   const callVendor = () => {
-    if (!vendor) return;
+    if (!vendor || !vendor.contact || !vendor.contact.phone) {
+      Logger.warn(LogCategory.GENERAL, 'Cannot call vendor - missing phone number', { vendorId });
+      alert('Phone number not available for this vendor.');
+      return;
+    }
     
     const phoneNumber = vendor.contact.phone.replace(/[^\d]/g, '');
+    if (!phoneNumber) {
+      Logger.warn(LogCategory.GENERAL, 'Invalid phone number for vendor', { vendorId });
+      alert('Invalid phone number for this vendor.');
+      return;
+    }
+    
     const url = `tel:${phoneNumber}`;
     
     Linking.openURL(url).catch(err => {
@@ -125,7 +156,11 @@ const VendorProfile = ({ route, navigation }) => {
   };
   
   const emailVendor = () => {
-    if (!vendor) return;
+    if (!vendor || !vendor.contact || !vendor.contact.email) {
+      Logger.warn(LogCategory.GENERAL, 'Cannot email vendor - missing email address', { vendorId });
+      alert('Email address not available for this vendor.');
+      return;
+    }
     
     const url = `mailto:${vendor.contact.email}`;
     
@@ -136,7 +171,11 @@ const VendorProfile = ({ route, navigation }) => {
   };
   
   const openInstagram = () => {
-    if (!vendor || !vendor.contact.social.instagram) return;
+    if (!vendor || !vendor.contact || !vendor.contact.social || !vendor.contact.social.instagram) {
+      Logger.warn(LogCategory.GENERAL, 'Cannot open Instagram - missing handle', { vendorId });
+      alert('Instagram handle not available for this vendor.');
+      return;
+    }
     
     const url = `https://instagram.com/${vendor.contact.social.instagram}`;
     
@@ -147,7 +186,11 @@ const VendorProfile = ({ route, navigation }) => {
   };
   
   const openFacebook = () => {
-    if (!vendor || !vendor.contact.social.facebook) return;
+    if (!vendor || !vendor.contact || !vendor.contact.social || !vendor.contact.social.facebook) {
+      Logger.warn(LogCategory.GENERAL, 'Cannot open Facebook - missing page ID', { vendorId });
+      alert('Facebook page not available for this vendor.');
+      return;
+    }
     
     const url = `https://facebook.com/${vendor.contact.social.facebook}`;
     
@@ -158,20 +201,31 @@ const VendorProfile = ({ route, navigation }) => {
   };
   
   const shareVendor = async () => {
-    if (!vendor) return;
+    if (!vendor) {
+      Logger.warn(LogCategory.GENERAL, 'Cannot share vendor - missing vendor data', { vendorId });
+      alert('Vendor information not available to share.');
+      return;
+    }
     
     try {
-      await Share.share({
-        message: `Check out ${vendor.name} on Loot's Ganja Guide! They have great deals: ${vendor.location.address}`,
-        title: `${vendor.name} - Cannabis Dispensary`
+      const result = await Share.share({
+        message: `Check out ${vendor.name} on Loot's Ganja Guide! ${vendor.location?.address || ''}`,
+        title: `${vendor.name} on Loot's Ganja Guide`
       });
+      
+      if (result.action === Share.sharedAction) {
+        Logger.info(LogCategory.GENERAL, 'Vendor shared successfully', { vendorId });
+      }
     } catch (error) {
       Logger.error(LogCategory.GENERAL, 'Error sharing vendor', { error });
+      alert('Could not share vendor information. Please try again.');
     }
   };
   
   const getCurrentDayDeals = () => {
-    if (!vendor) return [];
+    if (!vendor || !vendor.deals || !vendor.deals.daily) {
+      return [];
+    }
     
     const today = getDayOfWeek();
     return vendor.deals.daily[today] || [];
@@ -186,9 +240,11 @@ const VendorProfile = ({ route, navigation }) => {
   
   // Format opening hours
   const formatHours = (day) => {
-    if (!vendor || !vendor.hours[day]) return 'Closed';
+    if (!vendor || !vendor.hours || !vendor.hours[day]) return 'Closed';
     
     const { open, close } = vendor.hours[day];
+    if (!open || !close) return 'Hours not available';
+    
     return `${open} - ${close}`;
   };
   
@@ -200,17 +256,22 @@ const VendorProfile = ({ route, navigation }) => {
   
   // Check if currently open
   const isCurrentlyOpen = () => {
-    if (!vendor) return false;
+    if (!vendor || !vendor.hours) return false;
     
     const today = getDayOfWeek();
     const hours = vendor.hours[today];
     
-    if (!hours) return false;
+    if (!hours || !hours.open || !hours.close) return false;
     
-    const now = new Date();
-    const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    
-    return currentTime >= hours.open && currentTime <= hours.close;
+    try {
+      const now = new Date();
+      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      
+      return currentTime >= hours.open && currentTime <= hours.close;
+    } catch (error) {
+      Logger.error(LogCategory.GENERAL, 'Error checking if vendor is open', { error, vendorId });
+      return false;
+    }
   };
   
   // Animation for header
@@ -231,6 +292,32 @@ const VendorProfile = ({ route, navigation }) => {
     outputRange: [0, 1],
     extrapolate: 'clamp'
   });
+  
+  // Helper function to find a vendor by ID from various sources
+  const findVendorById = (id) => {
+    if (!id) return null;
+    
+    // If vendor is already loaded in state, return it
+    if (vendor && vendor.id === id) {
+      return vendor;
+    }
+    
+    // Otherwise, use the cached vendors from state if available
+    if (state.vendorData && state.vendorData.list && Array.isArray(state.vendorData.list)) {
+      const cachedVendor = state.vendorData.list.find(v => v.id === id);
+      if (cachedVendor) return cachedVendor;
+    }
+    
+    // For journey vendors
+    if (state.journey && state.journey.vendors && Array.isArray(state.journey.vendors)) {
+      const journeyVendor = state.journey.vendors.find(v => v.id === id);
+      if (journeyVendor) return journeyVendor;
+    }
+    
+    // If we reach here, we'll have to load the vendor via API
+    // This should be done asynchronously in loadVendorData
+    return null;
+  };
   
   if (isLoading) {
     return (

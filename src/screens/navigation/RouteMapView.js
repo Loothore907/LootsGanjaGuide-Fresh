@@ -41,11 +41,14 @@ const RouteMapView = ({ navigation }) => {
   const locationSubscription = useRef(null);
 
   // Get journey vendors from state
-  const { vendors, currentVendorIndex } = state.journey;
-  const currentVendor = vendors[currentVendorIndex];
+  const { vendors = [], currentVendorIndex = 0 } = state.journey || {};
+  const currentVendor = vendors && vendors.length > 0 && currentVendorIndex >= 0 && currentVendorIndex < vendors.length 
+    ? vendors[currentVendorIndex] 
+    : null;
   
   // Determine if this is the last vendor in the journey
-  const isLastVendor = state.journey.currentVendorIndex === state.journey.vendors.length - 1;
+  const isLastVendor = state.journey && state.journey.vendors && 
+    state.journey.currentVendorIndex === state.journey.vendors.length - 1;
 
   // Set up location tracking and route
   useEffect(() => {
@@ -74,13 +77,23 @@ const RouteMapView = ({ navigation }) => {
             { latitude: initialLocation.coords.latitude, longitude: initialLocation.coords.longitude }
           ];
           
-          // Add all vendor coordinates to the route
-          vendors.forEach(vendor => {
-            coordinates.push({
-              latitude: vendor.location.coordinates.latitude,
-              longitude: vendor.location.coordinates.longitude
+          // Add all vendor coordinates to the route with defensive checks
+          if (vendors && Array.isArray(vendors)) {
+            vendors.forEach(vendor => {
+              if (vendor && vendor.location && vendor.location.coordinates && 
+                  typeof vendor.location.coordinates.latitude === 'number' && 
+                  typeof vendor.location.coordinates.longitude === 'number') {
+                coordinates.push({
+                  latitude: vendor.location.coordinates.latitude,
+                  longitude: vendor.location.coordinates.longitude
+                });
+              } else {
+                Logger.warn(LogCategory.NAVIGATION, 'Vendor missing valid coordinates', { 
+                  vendorId: vendor?.id || 'unknown' 
+                });
+              }
             });
-          });
+          }
           
           setRouteCoordinates(coordinates);
           
@@ -264,40 +277,44 @@ const RouteMapView = ({ navigation }) => {
   };
 
   // Render each vendor in the journey list
-  const renderVendorItem = ({ item, index }) => (
-    <ListItem
-      containerStyle={[
-        styles.vendorItem,
-        index === currentVendorIndex && styles.currentVendorItem
-      ]}
-      onPress={() => navigateToVendor(index)}
-    >
-      <ListItem.Content>
-        <View style={styles.vendorItemHeader}>
-          <View style={styles.vendorNumberContainer}>
-            <Text style={styles.vendorNumber}>{index + 1}</Text>
+  const renderVendorItem = ({ item, index }) => {
+    if (!item) return null;
+    
+    return (
+      <ListItem
+        containerStyle={[
+          styles.vendorItem,
+          index === currentVendorIndex && styles.currentVendorItem
+        ]}
+        onPress={() => navigateToVendor(index)}
+      >
+        <ListItem.Content>
+          <View style={styles.vendorItemHeader}>
+            <View style={styles.vendorNumberContainer}>
+              <Text style={styles.vendorNumber}>{index + 1}</Text>
+            </View>
+            <View style={styles.vendorDetails}>
+              <ListItem.Title style={styles.vendorTitle}>{item.name || 'Unknown Vendor'}</ListItem.Title>
+              <ListItem.Subtitle style={styles.vendorAddress}>
+                {item.location?.address || 'Address unavailable'}
+              </ListItem.Subtitle>
+            </View>
           </View>
-          <View style={styles.vendorDetails}>
-            <ListItem.Title style={styles.vendorTitle}>{item.name}</ListItem.Title>
-            <ListItem.Subtitle style={styles.vendorAddress}>
-              {item.location.address}
-            </ListItem.Subtitle>
-          </View>
-        </View>
-      </ListItem.Content>
-      
-      {index === currentVendorIndex ? (
-        <TouchableOpacity 
-          style={styles.imHereButton}
-          onPress={() => handleArrivalConfirmation(item)}
-        >
-          <Text style={styles.imHereText}>I'm Here</Text>
-        </TouchableOpacity>
-      ) : (
-        <Icon name="chevron-right" type="material" color="#666" />
-      )}
-    </ListItem>
-  );
+        </ListItem.Content>
+        
+        {index === currentVendorIndex ? (
+          <TouchableOpacity 
+            style={styles.imHereButton}
+            onPress={() => handleArrivalConfirmation(item)}
+          >
+            <Text style={styles.imHereText}>I'm Here</Text>
+          </TouchableOpacity>
+        ) : (
+          <Icon name="chevron-right" type="material" color="#666" />
+        )}
+      </ListItem>
+    );
+  };
 
   // Show loading screen or ad
   if (isAdVisible) {
@@ -372,27 +389,31 @@ const RouteMapView = ({ navigation }) => {
               showsUserLocation={true}
             >
               {/* Vendor markers */}
-              {vendors.map((vendor, index) => (
-                <Marker
-                  key={vendor.id}
-                  coordinate={{
-                    latitude: vendor.location.coordinates.latitude,
-                    longitude: vendor.location.coordinates.longitude,
-                  }}
-                  title={vendor.name}
-                  description={`Stop ${index + 1}`}
-                >
-                  <View style={[
-                    styles.markerContainer,
-                    index === currentVendorIndex && styles.currentMarkerContainer
-                  ]}>
-                    <Text style={styles.markerText}>{index + 1}</Text>
-                  </View>
-                </Marker>
+              {vendors && Array.isArray(vendors) && vendors.map((vendor, index) => (
+                vendor && vendor.location && vendor.location.coordinates && 
+                typeof vendor.location.coordinates.latitude === 'number' && 
+                typeof vendor.location.coordinates.longitude === 'number' ? (
+                  <Marker
+                    key={vendor.id || `vendor-${index}`}
+                    coordinate={{
+                      latitude: vendor.location.coordinates.latitude,
+                      longitude: vendor.location.coordinates.longitude,
+                    }}
+                    title={vendor.name || `Stop ${index + 1}`}
+                    description={`Stop ${index + 1}`}
+                  >
+                    <View style={[
+                      styles.markerContainer,
+                      index === currentVendorIndex && styles.currentMarkerContainer
+                    ]}>
+                      <Text style={styles.markerText}>{index + 1}</Text>
+                    </View>
+                  </Marker>
+                ) : null
               ))}
               
               {/* Route line */}
-              {routeCoordinates.length > 1 && (
+              {routeCoordinates && Array.isArray(routeCoordinates) && routeCoordinates.length > 1 && (
                 <Polyline
                   coordinates={routeCoordinates}
                   strokeWidth={3}
@@ -407,7 +428,7 @@ const RouteMapView = ({ navigation }) => {
             <TouchableOpacity 
               style={styles.mapControlButton}
               onPress={() => {
-                if (mapRef.current && routeCoordinates.length > 0) {
+                if (mapRef.current && routeCoordinates && Array.isArray(routeCoordinates) && routeCoordinates.length > 0) {
                   mapRef.current.fitToCoordinates(
                     routeCoordinates,
                     {
@@ -442,12 +463,18 @@ const RouteMapView = ({ navigation }) => {
         <View style={styles.vendorListContainer}>
           <Text style={styles.vendorListTitle}>Stops on Your Journey</Text>
           
-          <FlatList
-            data={vendors}
-            renderItem={renderVendorItem}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.vendorList}
-          />
+          {vendors && Array.isArray(vendors) && vendors.length > 0 ? (
+            <FlatList
+              data={vendors}
+              renderItem={renderVendorItem}
+              keyExtractor={(item) => item?.id || Math.random().toString()}
+              contentContainerStyle={styles.vendorList}
+            />
+          ) : (
+            <View style={styles.noVendorsContainer}>
+              <Text style={styles.noVendorsText}>No vendors available for this journey</Text>
+            </View>
+          )}
           
           <View style={styles.actionButtons}>
             {/* Show Skip button if we're not on the last vendor */}
@@ -673,6 +700,16 @@ const styles = StyleSheet.create({
   },
   fullWidthButton: {
     width: '100%', // Full width when it's the only button
+  },
+  noVendorsContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  noVendorsText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
   },
 });
 

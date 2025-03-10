@@ -17,6 +17,7 @@ import {
   Icon,
   Card
 } from '@rneui/themed';
+import serviceProvider from '../../services/ServiceProvider';
 
 // Import the Camera conditionally to avoid crashes if it's not available
 let Camera;
@@ -57,7 +58,6 @@ import { useAppState, AppActions } from '../../context/AppStateContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
-import serviceProvider from '../../services/ServiceProvider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import redemptionService from '../../services/RedemptionService';
 import locationService from '../../services/LocationService';
@@ -214,8 +214,8 @@ const VendorCheckin = ({ route, navigation }) => {
         // Convert potential numeric string ID to string explicitly
         const vendorIdStr = String(id);
         
-        // Get vendor information - use direct getVendorById function
-        const vendor = await getVendorById(vendorIdStr);
+        // Get vendor information - use serviceProvider instead of non-existent getVendorById
+        const vendor = await serviceProvider.getVendorById(vendorIdStr);
         
         // Check if vendor exists
         if (!vendor) {
@@ -268,8 +268,8 @@ const VendorCheckin = ({ route, navigation }) => {
           // Explicitly convert to string to avoid type issues
           const vendorIdStr = String(scannedVendorId);
           
-          // Get vendor information - use direct getVendorById function
-          const vendor = await getVendorById(vendorIdStr);
+          // Get vendor information - use serviceProvider instead of non-existent getVendorById
+          const vendor = await serviceProvider.getVendorById(vendorIdStr);
           
           if (!vendor) {
             throw new Error(`No vendor found with ID: ${vendorIdStr}`);

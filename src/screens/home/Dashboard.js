@@ -110,13 +110,23 @@ const Dashboard = ({ navigation }) => {
     try {
       await tryCatch(async () => {
         // Get vendors from cache
-        const vendors = vendorCacheService.getAllVendors();
+        const vendorsData = vendorCacheService.getAllVendors();
         
         // Get recent vendors
-        const recentVendors = await serviceProvider.getRecentVendors(5);
+        const recentVendorsData = await serviceProvider.getRecentVendors(5);
         
-        // Get metrics
-        const stats = await serviceProvider.getMetrics();
+        try {
+          // Get redemption stats directly from redemptionService instead of serviceProvider
+          const stats = await redemptionService.getRedemptionStats();
+          setMetrics(stats);
+        } catch (statsError) {
+          Logger.error(LogCategory.DASHBOARD, 'Error fetching metrics', { error: statsError });
+          // Use default metrics if error
+          setMetrics({
+            today: { count: 0, uniqueVendors: 0 },
+            total: { count: 0, uniqueVendors: 0 }
+          });
+        }
         
         // Count available deals
         let birthdayDeals = 0;
@@ -125,7 +135,7 @@ const Dashboard = ({ navigation }) => {
         
         try {
           // Count birthday deals from vendors with birthday deals
-          birthdayDeals = vendors.filter(vendor => 
+          birthdayDeals = vendorsData.filter(vendor => 
             vendor.deals && 
             vendor.deals.birthday && 
             vendor.status === "Active-Operating"
@@ -133,7 +143,7 @@ const Dashboard = ({ navigation }) => {
           
           // Count daily deals from vendors with daily deals for today
           const today = getCurrentDayOfWeek();
-          dailyDeals = vendors.filter(vendor => 
+          dailyDeals = vendorsData.filter(vendor => 
             vendor.deals && 
             vendor.deals.daily && 
             vendor.deals.daily[today] && 
@@ -143,7 +153,7 @@ const Dashboard = ({ navigation }) => {
           
           // Count special deals from vendors with active special deals
           const now = new Date();
-          specialDeals = vendors.filter(vendor => {
+          specialDeals = vendorsData.filter(vendor => {
             if (!vendor.deals?.special || !Array.isArray(vendor.deals.special) || vendor.status !== "Active-Operating") {
               return false;
             }
@@ -162,25 +172,32 @@ const Dashboard = ({ navigation }) => {
           });
         } catch (countError) {
           Logger.error(LogCategory.DEALS, 'Error counting available deals', { error: countError });
+          // Set defaults if counting fails
+          birthdayDeals = 0;
+          dailyDeals = 0;
+          specialDeals = 0;
         }
         
         // Update state with all loaded data
-        setVendors(vendors);
-        setRecentVendors(recentVendors);
-        setMetrics(stats);
+        setVendors(vendorsData);
+        setRecentVendors(recentVendorsData);
         setBirthdayAvailable(birthdayDeals > 0);
         setDailyAvailable(dailyDeals > 0);
         setSpecialAvailable(specialDeals > 0);
         
         // Store vendor data in global state for reuse
-        if (vendors.length > 0) {
-          dispatch(AppActions.updateVendorData(vendors));
+        if (vendorsData.length > 0) {
+          dispatch(AppActions.updateVendorData({
+            vendors: vendorsData
+          }));
         }
       }, LogCategory.GENERAL, 'loading dashboard data', true);
     } catch (error) {
       // Error already logged by tryCatch
+      setError('Failed to load dashboard data. Pull down to refresh.');
     } finally {
       setIsLoading(false);
+      setRefreshing(false);
     }
   };
   

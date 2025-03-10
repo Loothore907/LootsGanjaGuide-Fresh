@@ -14,7 +14,8 @@ import {
   where, 
   orderBy, 
   limit,
-  runTransaction
+  runTransaction,
+  firestoreLimit
 } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import VendorRepository from './VendorRepository';
@@ -517,40 +518,51 @@ class JourneyRepository extends BaseRepository {
   /**
    * Get recent journeys for the current user
    * @param {number} limit - Maximum number of journeys to return
-   * @returns {Promise<Array>} - Array of recent journeys
+   * @returns {Promise<Array>} - Array of journey objects
    */
   async getRecentJourneys(limit = 5) {
     try {
+      // Get current user ID
       const userId = this.getCurrentUserId();
-      
       if (!userId) {
+        Logger.warn(LogCategory.JOURNEY, 'No current user ID for getting recent journeys');
         return [];
       }
-      
+
       Logger.info(LogCategory.JOURNEY, 'Getting recent journeys', { userId, limit });
       
-      // Query for recent journeys, completed first then active
-      const q = query(
-        this.collectionRef,
+      // Create query to get journeys
+      const journeysRef = collection(firestore, 'journeys');
+      // Use explicit query with where, orderBy, and limit as separate parameters
+      let q = query(
+        journeysRef,
         where('userId', '==', userId),
-        orderBy('updatedAt', 'desc'),
-        limit(limit)
+        orderBy('createdAt', 'desc')
       );
       
+      // Add numeric limit - note: using limit as a value, not as a function
+      if (typeof limit === 'number' && limit > 0) {
+        q = query(q, firestoreLimit(limit));
+      }
+      
+      // Execute query
       const querySnapshot = await getDocs(q);
       const journeys = [];
       
-      querySnapshot.forEach(doc => {
+      // Process results
+      querySnapshot.forEach((doc) => {
         journeys.push(this.normalizeTimestamps({
           id: doc.id,
           ...doc.data()
         }));
       });
       
+      Logger.info(LogCategory.JOURNEY, `Retrieved ${journeys.length} recent journeys`);
       return journeys;
     } catch (error) {
       Logger.error(LogCategory.JOURNEY, 'Error getting recent journeys', { error });
-      throw error;
+      // Return empty array on error
+      return [];
     }
   }
 
