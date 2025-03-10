@@ -112,7 +112,7 @@ class LocationService {
       
       if (status !== 'granted') {
         Logger.warn(LogCategory.LOCATION, 'Location permission denied', { status });
-        return null;
+        return await this.getFallbackLocation();
       }
       
       // Try to get the location with a timeout
@@ -135,10 +135,20 @@ class LocationService {
             longitude: location.coords.longitude
           });
           
-          return {
+          // Cache this location for future use
+          this.lastKnownLocation = {
             latitude: location.coords.latitude,
             longitude: location.coords.longitude
           };
+          
+          // Store in AsyncStorage for persistence
+          try {
+            await AsyncStorage.setItem('last_known_location', JSON.stringify(this.lastKnownLocation));
+          } catch (storageError) {
+            Logger.warn(LogCategory.STORAGE, 'Failed to cache location', { storageError });
+          }
+          
+          return this.lastKnownLocation;
         } else {
           throw new Error('Invalid location data received');
         }
@@ -150,56 +160,115 @@ class LocationService {
         });
         
         // Fallback to last known location if available
-        return this.getLastKnownLocation();
+        return await this.getFallbackLocation();
       }
     } catch (error) {
       Logger.error(LogCategory.LOCATION, 'Error in getCurrentLocation', {
         error: error.message || 'Unknown error',
         stack: error.stack
       });
+      return await this.getFallbackLocation();
+    }
+  }
+  
+  /**
+   * Get a fallback location using various strategies
+   * @returns {Promise<{latitude: number, longitude: number} | null>}
+   */
+  async getFallbackLocation() {
+    try {
+      // Strategy 1: Try to get the last known position from Expo Location
+      try {
+        const location = await Location.getLastKnownPositionAsync();
+        
+        if (location && location.coords) {
+          Logger.info(LogCategory.LOCATION, 'Using Expo last known location', {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude
+          });
+          
+          return {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude
+          };
+        }
+      } catch (lastKnownError) {
+        Logger.warn(LogCategory.LOCATION, 'Failed to get Expo last known location', { error: lastKnownError });
+      }
+      
+      // Strategy 2: Try to get location from AsyncStorage
+      try {
+        const storedLocation = await AsyncStorage.getItem('last_known_location');
+        if (storedLocation) {
+          const parsedLocation = JSON.parse(storedLocation);
+          
+          if (parsedLocation && 
+              typeof parsedLocation.latitude === 'number' && 
+              typeof parsedLocation.longitude === 'number') {
+            
+            Logger.info(LogCategory.LOCATION, 'Using stored location from AsyncStorage', {
+              latitude: parsedLocation.latitude,
+              longitude: parsedLocation.longitude
+            });
+            
+            return parsedLocation;
+          }
+        }
+      } catch (storageError) {
+        Logger.warn(LogCategory.STORAGE, 'Failed to retrieve cached location', { storageError });
+      }
+      
+      // Strategy 3: Use cached instance variable if available
+      if (this.lastKnownLocation && 
+          typeof this.lastKnownLocation.latitude === 'number' && 
+          typeof this.lastKnownLocation.longitude === 'number') {
+        
+        Logger.info(LogCategory.LOCATION, 'Using in-memory cached location', {
+          latitude: this.lastKnownLocation.latitude,
+          longitude: this.lastKnownLocation.longitude
+        });
+        
+        return this.lastKnownLocation;
+      }
+      
+      // Strategy 4: Default to Anchorage location
+      const defaultLocation = {
+        latitude: 61.2181, // Anchorage, Alaska
+        longitude: -149.9003
+      };
+      
+      // In development mode, use default location without warning
+      // In production, return null to indicate failure
+      if (__DEV__) {
+        Logger.warn(LogCategory.LOCATION, 'Using default Anchorage location (dev only)');
+        return defaultLocation;
+      } else {
+        Logger.warn(LogCategory.LOCATION, 'No fallback location available in production');
+        return null;
+      }
+    } catch (error) {
+      Logger.error(LogCategory.LOCATION, 'Error in getFallbackLocation', { error });
+      
+      // Last resort fallback for dev mode only
+      if (__DEV__) {
+        return {
+          latitude: 61.2181, // Anchorage, Alaska
+          longitude: -149.9003
+        };
+      }
+      
       return null;
     }
   }
   
   /**
    * Get the last known location as a fallback
+   * @deprecated Use getFallbackLocation() instead
    * @returns {Promise<{latitude: number, longitude: number} | null>}
    */
   async getLastKnownLocation() {
-    try {
-      const location = await Location.getLastKnownPositionAsync();
-      
-      if (location && location.coords) {
-        Logger.info(LogCategory.LOCATION, 'Using last known location', {
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude
-        });
-        
-        return {
-          latitude: location.coords.latitude,
-          longitude: location.coords.longitude
-        };
-      } else {
-        // If no last known location, use a default Anchorage location
-        // This is a fallback for development purposes
-        if (__DEV__) {
-          Logger.warn(LogCategory.LOCATION, 'Using default Anchorage location (dev only)');
-          
-          return {
-            latitude: 61.2181,
-            longitude: -149.9003
-          };
-        } else {
-          // In production, don't use a default location
-          return null;
-        }
-      }
-    } catch (error) {
-      Logger.error(LogCategory.LOCATION, 'Error getting last known location', {
-        error: error.message || 'Unknown error'
-      });
-      return null;
-    }
+    // For backward compatibility, redirect to new method
+    return this.getFallbackLocation();
   }
   
   /**

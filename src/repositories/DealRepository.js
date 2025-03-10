@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { isValidDeal, isValidSpecialDeal, DealType, DayOfWeek } from '../types/Schema';
 import VendorRepository from './VendorRepository';
+import { vendorCacheService } from '../services/VendorCacheService';
 
 /**
  * Repository for deal-related Firestore operations
@@ -95,6 +96,24 @@ class DealRepository extends BaseRepository {
   async getFeatured(limit = 5, options = {}) {
     try {
       Logger.info(LogCategory.DEALS, 'Getting featured deals', { limit, options });
+
+      // If in development mode, return placeholder deals
+      if (__DEV__) {
+        return [
+          {
+            id: 'placeholder-1',
+            title: 'Featured Deal Placeholder',
+            description: 'Add your featured deals here',
+            discount: '20% OFF',
+            vendorName: 'Sample Vendor',
+            dealType: 'special',
+            isPlaceholder: true,
+            featured: true,
+            featuredPriority: 1,
+            imageUrl: null
+          }
+        ];
+      }
       
       // Query the featured_deals collection
       const featuredRef = collection(firestore, 'featured_deals');
@@ -105,7 +124,7 @@ class DealRepository extends BaseRepository {
       // Add order by priority and creation date
       q = query(q, orderBy('priority', 'desc'), orderBy('createdAt', 'desc'));
       
-      // Apply limit (using the renamed firestoreLimit function)
+      // Apply limit
       const limitValue = options.limit || limit;
       if (limitValue && typeof limitValue === 'number') {
         q = query(q, firestoreLimit(limitValue));
@@ -125,16 +144,11 @@ class DealRepository extends BaseRepository {
           if (featuredData.dealType === 'special' && featuredData.dealRef) {
             // Check if dealRef is a valid reference before trying to use it
             if (typeof featuredData.dealRef.get === 'function') {
-              // Get special deal directly
               const specialDealSnap = await getDoc(featuredData.dealRef);
               
               if (specialDealSnap.exists()) {
                 dealData = { id: specialDealSnap.id, ...specialDealSnap.data() };
               }
-            } else {
-              Logger.warn(LogCategory.DEALS, 'Invalid dealRef in featured deal', { 
-                featuredId: docSnapshot.id 
-              });
             }
           } else if (featuredData.vendorRef) {
             // For other deal types, we need to get the vendor and extract the deal
@@ -162,7 +176,7 @@ class DealRepository extends BaseRepository {
                            vendor.deals && 
                            vendor.deals.daily && 
                            vendor.deals.daily[featuredData.day]) {
-                  const dailyDeal = vendor.deals.daily[featuredData.day][0]; // Get first deal for the day
+                  const dailyDeal = vendor.deals.daily[featuredData.day][0];
                   
                   if (dailyDeal) {
                     dealData = {
@@ -179,10 +193,6 @@ class DealRepository extends BaseRepository {
                   }
                 }
               }
-            } else {
-              Logger.warn(LogCategory.DEALS, 'Invalid vendorRef in featured deal', { 
-                featuredId: docSnapshot.id 
-              });
             }
           }
           
@@ -200,20 +210,53 @@ class DealRepository extends BaseRepository {
             });
           }
         } catch (innerError) {
-          // Log error but continue processing other deals
           Logger.error(LogCategory.DEALS, 'Error processing featured deal', { 
             error: innerError,
             featuredId: docSnapshot.id
           });
         }
       }
+
+      // If no featured deals found, return placeholder in development mode
+      if (featuredDeals.length === 0 && __DEV__) {
+        return [
+          {
+            id: 'placeholder-1',
+            title: 'Featured Deal Placeholder',
+            description: 'Add your featured deals here',
+            discount: '20% OFF',
+            vendorName: 'Sample Vendor',
+            dealType: 'special',
+            isPlaceholder: true,
+            featured: true,
+            featuredPriority: 1,
+            imageUrl: null
+          }
+        ];
+      }
       
-      // Apply processing
-      const processedDeals = await this.processDeals(featuredDeals, options);
-      
-      return processedDeals;
+      return featuredDeals;
     } catch (error) {
       Logger.error(LogCategory.DEALS, 'Error getting featured deals', { error });
+      
+      // Return placeholder in development mode on error
+      if (__DEV__) {
+        return [
+          {
+            id: 'placeholder-1',
+            title: 'Featured Deal Placeholder',
+            description: 'Add your featured deals here',
+            discount: '20% OFF',
+            vendorName: 'Sample Vendor',
+            dealType: 'special',
+            isPlaceholder: true,
+            featured: true,
+            featuredPriority: 1,
+            imageUrl: null
+          }
+        ];
+      }
+      
       throw error;
     }
   }
@@ -233,15 +276,10 @@ class DealRepository extends BaseRepository {
         throw new Error(`Invalid day: ${day}. Must be one of: ${Object.values(DayOfWeek).join(', ')}`);
       }
       
-      // Get all vendors with daily deals for this day
-      const vendorOptions = {
-        maxDistance: options.maxDistance,
-        userLocation: options.userLocation,
-        activeRegionsOnly: true // Make sure we only get active vendors
-      };
-      
-      // Get vendors that might have daily deals
-      const vendors = await this.vendorRepository.getAll(vendorOptions);
+      // Get vendors from cache
+      const vendors = vendorCacheService.getAllVendors({
+        userLocation: options.userLocation
+      });
       
       // Extract daily deals from vendors
       const dailyDeals = [];
@@ -251,7 +289,7 @@ class DealRepository extends BaseRepository {
         if (vendor.status !== 'Active-Operating') {
           return;
         }
-        
+
         // Check if vendor has daily deals for this day
         if (vendor.deals?.daily?.[day] && Array.isArray(vendor.deals.daily[day])) {
           vendor.deals.daily[day].forEach((deal, index) => {
@@ -269,34 +307,10 @@ class DealRepository extends BaseRepository {
               redemptionFrequency: deal.redemptionFrequency || 'once_per_day',
               vendorId: vendor.id,
               vendorName: vendor.name,
+              vendorAddress: vendor.location?.address || 'Address unavailable',
+              vendorCoordinates: vendor.location?.coordinates,
               dealType: 'daily',
               day,
-              vendorDistance: vendor.distance || null,
-              vendorIsPartner: vendor.isPartner || false,
-              isActive: deal.isActive !== false // Default to true unless explicitly false
-            });
-          });
-        }
-        
-        // Also check for everyday deals if this is a valid structure
-        if (vendor.deals?.everyday && Array.isArray(vendor.deals.everyday)) {
-          vendor.deals.everyday.forEach((deal, index) => {
-            // Skip invalid deals
-            if (!deal.description || !deal.discount) {
-              return;
-            }
-            
-            dailyDeals.push({
-              id: `${vendor.id}-everyday-${index}`,
-              title: deal.title || deal.description,
-              description: deal.description,
-              discount: deal.discount,
-              restrictions: deal.restrictions || [],
-              redemptionFrequency: deal.redemptionFrequency || 'once_per_day',
-              vendorId: vendor.id,
-              vendorName: vendor.name,
-              dealType: 'everyday',
-              day: 'everyday',
               vendorDistance: vendor.distance || null,
               vendorIsPartner: vendor.isPartner || false,
               isActive: deal.isActive !== false
@@ -304,8 +318,9 @@ class DealRepository extends BaseRepository {
           });
         }
       });
-      
-      return dailyDeals;
+
+      // Process deals with common filters
+      return this.processDeals(dailyDeals, options);
     } catch (error) {
       Logger.error(LogCategory.DEALS, 'Error getting daily deals', { error, day });
       throw error;
@@ -321,14 +336,10 @@ class DealRepository extends BaseRepository {
     try {
       Logger.info(LogCategory.DEALS, 'Getting birthday deals', { options });
       
-      // Get active vendors
-      const vendorOptions = {
-        maxDistance: options.maxDistance,
-        userLocation: options.userLocation,
-        activeRegionsOnly: true
-      };
-      
-      const vendors = await this.vendorRepository.getAll(vendorOptions);
+      // Get vendors from cache
+      const vendors = vendorCacheService.getAllVendors({
+        userLocation: options.userLocation
+      });
       
       // Extract birthday deals from vendors
       const birthdayDeals = vendors
@@ -345,13 +356,16 @@ class DealRepository extends BaseRepository {
           redemptionFrequency: vendor.deals.birthday.redemptionFrequency || 'once_per_year',
           vendorId: vendor.id,
           vendorName: vendor.name,
+          vendorAddress: vendor.location?.address || 'Address unavailable',
+          vendorCoordinates: vendor.location?.coordinates,
           dealType: 'birthday',
           vendorDistance: vendor.distance || null,
           vendorIsPartner: vendor.isPartner || false,
-          isActive: vendor.deals.birthday.isActive !== false // Default to true unless explicitly false
+          isActive: vendor.deals.birthday.isActive !== false
         }));
-      
-      return birthdayDeals;
+
+      // Process deals with common filters
+      return this.processDeals(birthdayDeals, options);
     } catch (error) {
       Logger.error(LogCategory.DEALS, 'Error getting birthday deals', { error });
       throw error;
@@ -367,14 +381,10 @@ class DealRepository extends BaseRepository {
     try {
       Logger.info(LogCategory.DEALS, 'Getting special deals', { options });
       
-      // Get active vendors
-      const vendorOptions = {
-        maxDistance: options.maxDistance,
-        userLocation: options.userLocation,
-        activeRegionsOnly: true
-      };
-      
-      const vendors = await this.vendorRepository.getAll(vendorOptions);
+      // Get vendors from cache
+      const vendors = vendorCacheService.getAllVendors({
+        userLocation: options.userLocation
+      });
       
       // Extract special deals from vendors
       const now = new Date().toISOString();
@@ -414,13 +424,14 @@ class DealRepository extends BaseRepository {
               dealType: 'special',
               vendorDistance: vendor.distance || null,
               vendorIsPartner: vendor.isPartner || false,
-              isActive: deal.isActive !== false // Default to true unless explicitly false
+              isActive: deal.isActive !== false
             });
           });
         }
       });
-      
-      return specialDeals;
+
+      // Process deals with common filters
+      return this.processDeals(specialDeals, options);
     } catch (error) {
       Logger.error(LogCategory.DEALS, 'Error getting special deals', { error });
       throw error;
@@ -462,15 +473,55 @@ class DealRepository extends BaseRepository {
         }
       }
       
+      // If no vendors found with requested deal type, go to fallback path for development
+      if (vendors.length === 0 && __DEV__ && options.dealType) {
+        Logger.warn(LogCategory.NAVIGATION, 'No vendors found with requested deal type, using ANY active vendors');
+        
+        // Get a few active vendors as fallback
+        const fallbackVendors = await this.vendorRepository.getAll({
+          activeRegionsOnly: false,
+          limit: options.maxVendors || 3,
+          ignoreDistance: true
+        });
+        
+        // Create synthetic deals for these vendors
+        if (fallbackVendors.length > 0) {
+          Logger.info(LogCategory.NAVIGATION, `Created synthetic ${options.dealType} deals for ${fallbackVendors.length} vendors`);
+          
+          // Use these vendors instead
+          const processedVendors = fallbackVendors.map(vendor => {
+            // Log vendor location info for debugging
+            Logger.info(LogCategory.NAVIGATION, `Vendor ${vendor.id} location`, {
+              name: vendor.name,
+              coords: vendor.location?.coordinates,
+              distance: vendor.distance || this.vendorRepository.calculateDistance(
+                options.userLocation?.latitude || 61.2181,
+                options.userLocation?.longitude || -149.9003,
+                vendor.location?.coordinates?.latitude,
+                vendor.location?.coordinates?.longitude
+              )
+            });
+            
+            return {
+              ...vendor,
+              distance: vendor.distance || this.vendorRepository.calculateDistance(
+                options.userLocation?.latitude || 61.2181,
+                options.userLocation?.longitude || -149.9003,
+                vendor.location?.coordinates?.latitude,
+                vendor.location?.coordinates?.longitude
+              ),
+              checkedIn: false
+            };
+          });
+          
+          return this.createRouteFromVendors(processedVendors, options);
+        }
+      }
+      
       // Calculate distances and optimize route
-      // In a real app, you might use Google Maps Distance Matrix API
-      // For now, we'll just sort by distance from user location
-      
-      let sortedVendors = [...vendors];
-      
       if (options.userLocation) {
         // Calculate distance for each vendor
-        sortedVendors = vendors.map(vendor => {
+        const vendorsWithDistance = vendors.map(vendor => {
           const distance = this.vendorRepository.calculateDistance(
             options.userLocation.latitude,
             options.userLocation.longitude,
@@ -485,51 +536,70 @@ class DealRepository extends BaseRepository {
           };
         });
         
-        // Sort by distance
-        sortedVendors.sort((a, b) => a.distance - b.distance);
+        return this.createRouteFromVendors(vendorsWithDistance, options);
+      } else {
+        // If no user location provided, just return the vendors in the original order
+        return this.createRouteFromVendors(vendors.map(v => ({...v, checkedIn: false})), options);
       }
-      
-      // Calculate total distance
-      let totalDistance = 0;
-      let prevLat = options.userLocation?.latitude;
-      let prevLng = options.userLocation?.longitude;
-      
-      if (prevLat && prevLng) {
-        for (const vendor of sortedVendors) {
-          const distance = this.vendorRepository.calculateDistance(
-            prevLat,
-            prevLng,
-            vendor.location.coordinates.latitude,
-            vendor.location.coordinates.longitude
-          );
-          
-          totalDistance += distance;
-          prevLat = vendor.location.coordinates.latitude;
-          prevLng = vendor.location.coordinates.longitude;
-        }
-      }
-      
-      // Calculate estimated time (rough estimate: 3 minutes per mile)
-      const estimatedTime = Math.ceil(totalDistance * 3);
-      
-      // Create route object
-      const route = {
-        vendors: sortedVendors,
-        totalDistance,
-        estimatedTime,
-        dealType: options.dealType || 'mixed',
-        createdAt: new Date().toISOString()
-      };
-      
-      if (options.userLocation) {
-        route.startLocation = options.userLocation;
-      }
-      
-      return route;
     } catch (error) {
       Logger.error(LogCategory.NAVIGATION, 'Error creating route from deals', { error, dealIds });
       throw error;
     }
+  }
+
+  /**
+   * Helper method to create a route from an array of vendors
+   * @param {Array} vendors - Array of vendors with distance information
+   * @param {Object} options - Route options
+   * @returns {Promise<Object>} - Route object
+   */
+  async createRouteFromVendors(vendors, options = {}) {
+    // Sort vendors by distance
+    const sortedVendors = [...vendors].sort((a, b) => 
+      (a.distance || Infinity) - (b.distance || Infinity)
+    );
+    
+    // Calculate total distance
+    let totalDistance = 0;
+    let prevLat = options.userLocation?.latitude || 61.2181; // Default to Anchorage
+    let prevLng = options.userLocation?.longitude || -149.9003;
+    
+    for (const vendor of sortedVendors) {
+      const distance = this.vendorRepository.calculateDistance(
+        prevLat,
+        prevLng,
+        vendor.location.coordinates.latitude,
+        vendor.location.coordinates.longitude
+      );
+      
+      totalDistance += distance;
+      prevLat = vendor.location.coordinates.latitude;
+      prevLng = vendor.location.coordinates.longitude;
+    }
+    
+    // Calculate estimated time (rough estimate: 3 minutes per mile plus 15 minutes per stop)
+    const estimatedTime = Math.ceil(totalDistance * 3) + (sortedVendors.length * 15);
+    
+    // Create route object
+    const route = {
+      success: true,
+      vendors: sortedVendors,
+      totalDistance: parseFloat(totalDistance.toFixed(2)),
+      estimatedTime,
+      dealType: options.dealType || 'mixed',
+      createdAt: new Date().toISOString()
+    };
+    
+    if (options.userLocation) {
+      route.startLocation = options.userLocation;
+    }
+    
+    Logger.info(LogCategory.NAVIGATION, 'Route created successfully', {
+      totalDistance: route.totalDistance,
+      vendorCount: route.vendors.length
+    });
+    
+    return route;
   }
 
   /**

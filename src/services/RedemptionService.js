@@ -178,10 +178,19 @@ class RedemptionService {
         // Current day of week
         const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
         const currentDay = daysOfWeek[new Date().getDay()];
-        return vendor.deals.daily && Array.isArray(vendor.deals.daily[currentDay]) && vendor.deals.daily[currentDay].length > 0;
+        return vendor.deals.daily && 
+               Array.isArray(vendor.deals.daily[currentDay]) && 
+               vendor.deals.daily[currentDay].length > 0;
       case 'special':
         // Check if there are any active special deals
-        return vendor.deals.special && Array.isArray(vendor.deals.special) && vendor.deals.special.length > 0;
+        const now = new Date();
+        const activeSpecials = vendor.deals.special?.filter(deal => {
+          if (!deal.startDate || !deal.endDate) return true;
+          const startDate = new Date(deal.startDate);
+          const endDate = new Date(deal.endDate);
+          return now >= startDate && now <= endDate;
+        }) || [];
+        return activeSpecials.length > 0;
       default:
         return false;
     }

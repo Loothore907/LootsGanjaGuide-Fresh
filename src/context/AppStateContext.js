@@ -3,6 +3,7 @@ import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logger, LogCategory } from '../services/LoggingService';
 import { handleError, tryCatch } from '../utils/ErrorHandler';
+import { vendorCacheService } from '../services/VendorCacheService';
 
 // Initial state
 const initialState = {
@@ -30,6 +31,8 @@ const initialState = {
   vendorData: {
     list: [],
     lastUpdated: null,
+    isCacheInitialized: false,
+    cacheStatus: 'uninitialized' // 'uninitialized' | 'initializing' | 'ready' | 'error'
   },
   dealFilters: {
     category: null,
@@ -57,6 +60,7 @@ const ActionTypes = {
   SKIP_VENDOR: 'SKIP_VENDOR',
   UPDATE_ROUTE: 'UPDATE_ROUTE',
   UPDATE_VENDOR_DATA: 'UPDATE_VENDOR_DATA',
+  UPDATE_VENDOR_CACHE_STATUS: 'UPDATE_VENDOR_CACHE_STATUS',
   UPDATE_DEAL_FILTERS: 'UPDATE_DEAL_FILTERS',
   SET_THEME: 'SET_THEME',
   SET_NOTIFICATIONS: 'SET_NOTIFICATIONS',
@@ -216,6 +220,15 @@ function appReducer(state, action) {
         }
       };
 
+    case ActionTypes.UPDATE_VENDOR_CACHE_STATUS:
+      return {
+        ...state,
+        vendorData: {
+          ...state.vendorData,
+          cacheStatus: action.payload
+        }
+      };
+
     case ActionTypes.UPDATE_DEAL_FILTERS:
       return {
         ...state,
@@ -285,95 +298,148 @@ export function AppStateProvider({ children }) {
   useEffect(() => {
     const loadPersistedData = async () => {
       try {
-        await tryCatch(async () => {
-          const [
-            isAgeVerified,
-            isTosAccepted,
-            username,
-            points,
-            favoritesJson,
-            recentVisitsJson,
-            theme,
-            notifications
-          ] = await Promise.all([
-            AsyncStorage.getItem('isAgeVerified'),
-            AsyncStorage.getItem('tosAccepted'),
-            AsyncStorage.getItem('username'),
-            AsyncStorage.getItem('points'),
-            AsyncStorage.getItem('favorites'),
-            AsyncStorage.getItem('recentVisits'),
-            AsyncStorage.getItem('theme'),
-            AsyncStorage.getItem('notifications')
-          ]);
+        // Load persisted state from AsyncStorage
+        const persistedState = await AsyncStorage.getItem('appState');
+        if (persistedState) {
+          const parsedState = JSON.parse(persistedState);
+          Object.keys(parsedState).forEach(key => {
+            if (key === 'user') {
+              dispatch({ type: ActionTypes.SET_AGE_VERIFICATION, payload: parsedState.user.isAgeVerified });
+              dispatch({ type: ActionTypes.SET_TOS_ACCEPTED, payload: parsedState.user.isTosAccepted });
+              dispatch({ type: ActionTypes.SET_USERNAME, payload: parsedState.user.username });
+              dispatch({ type: ActionTypes.UPDATE_POINTS, payload: parsedState.user.points });
+              parsedState.user.favorites.forEach(favorite => 
+                dispatch({ type: ActionTypes.ADD_FAVORITE, payload: favorite }));
+              parsedState.user.recentVisits.forEach(visit => 
+                dispatch({ type: ActionTypes.ADD_RECENT_VISIT, payload: visit }));
+            }
+            // Add other state restoration as needed
+          });
+        }
 
-          if (isAgeVerified === 'true') {
-            dispatch({ type: ActionTypes.SET_AGE_VERIFICATION, payload: true });
-          }
+        // Initialize vendor cache
+        dispatch({ type: ActionTypes.UPDATE_VENDOR_CACHE_STATUS, payload: 'initializing' });
+        
+        try {
+          await vendorCacheService.initialize();
           
-          if (isTosAccepted === 'true') {
-            dispatch({ type: ActionTypes.SET_TOS_ACCEPTED, payload: true });
-          }
-          
-          if (username) {
-            dispatch({ type: ActionTypes.SET_USERNAME, payload: username });
-          }
-          
-          if (points) {
-            dispatch({ type: ActionTypes.UPDATE_POINTS, payload: parseInt(points) });
-          }
-          
-          if (favoritesJson) {
-            const favorites = JSON.parse(favoritesJson);
-            for (const favoriteId of favorites) {
-              dispatch({ type: ActionTypes.ADD_FAVORITE, payload: favoriteId });
+          // Update vendor data from cache
+          if (vendorCacheService.isCacheLoaded()) {
+            const cachedVendors = vendorCacheService.getAllVendors();
+            if (cachedVendors && cachedVendors.length > 0) {
+              dispatch({ 
+                type: ActionTypes.UPDATE_VENDOR_DATA, 
+                payload: { 
+                  vendors: cachedVendors,
+                  lastUpdated: Date.now()
+                }
+              });
+              dispatch({ type: ActionTypes.UPDATE_VENDOR_CACHE_STATUS, payload: 'ready' });
             }
           }
-          
-          if (recentVisitsJson) {
-            const recentVisits = JSON.parse(recentVisitsJson);
-            for (const visit of recentVisits) {
-              dispatch({ type: ActionTypes.ADD_RECENT_VISIT, payload: visit });
-            }
-          }
-          
-          if (theme) {
-            dispatch({ type: ActionTypes.SET_THEME, payload: theme });
-          }
-          
-          if (notifications) {
-            dispatch({ type: ActionTypes.SET_NOTIFICATIONS, payload: notifications === 'true' });
-          }
-          
-          Logger.info(LogCategory.STORAGE, 'Loaded persisted state data');
-        }, LogCategory.STORAGE, 'loading persisted state', false);
+        } catch (cacheError) {
+          Logger.error(LogCategory.VENDORS, 'Error initializing vendor cache', { error: cacheError });
+          dispatch({ type: ActionTypes.UPDATE_VENDOR_CACHE_STATUS, payload: 'error' });
+        }
+
       } catch (error) {
-        // Error already logged by tryCatch
+        Logger.error(LogCategory.GENERAL, 'Error loading persisted data', { error });
+        dispatch({ type: ActionTypes.UPDATE_VENDOR_CACHE_STATUS, payload: 'error' });
       }
     };
 
     loadPersistedData();
   }, []);
 
-  // Persist state changes for specific items
+  // Subscribe to vendor cache updates
+  useEffect(() => {
+    let unsubscribe = () => {};
+
+    const setupSubscription = async () => {
+      try {
+        // Wait for vendor cache service to be available
+        if (!vendorCacheService) {
+          Logger.warn(LogCategory.VENDORS, 'Vendor cache service not available');
+          return;
+        }
+
+        unsubscribe = vendorCacheService.subscribe(async (event) => {
+          if (event.type === 'update' || event.type === 'init') {
+            const cachedVendors = vendorCacheService.getAllVendors();
+            if (cachedVendors && cachedVendors.length > 0) {
+              dispatch({ 
+                type: ActionTypes.UPDATE_VENDOR_DATA, 
+                payload: { 
+                  vendors: cachedVendors,
+                  lastUpdated: Date.now()
+                }
+              });
+            }
+          }
+        });
+      } catch (error) {
+        Logger.error(LogCategory.VENDORS, 'Error setting up vendor cache subscription', { error });
+      }
+    };
+
+    setupSubscription();
+
+    return () => {
+      try {
+        unsubscribe();
+      } catch (error) {
+        Logger.error(LogCategory.VENDORS, 'Error unsubscribing from vendor cache', { error });
+      }
+    };
+  }, []);
+
+  // Persist state changes
   useEffect(() => {
     const persistStateChanges = async () => {
       try {
-        await tryCatch(async () => {
-          await AsyncStorage.setItem('points', state.user.points.toString());
-          await AsyncStorage.setItem('favorites', JSON.stringify(state.user.favorites));
-          await AsyncStorage.setItem('recentVisits', JSON.stringify(state.user.recentVisits));
-          await AsyncStorage.setItem('theme', state.ui.theme);
-          await AsyncStorage.setItem('notifications', state.ui.notifications.toString());
-          
-          Logger.debug(LogCategory.STORAGE, 'Persisted state changes');
-        }, LogCategory.STORAGE, 'persisting state changes', false);
+        const stateToStore = {
+          user: {
+            isAgeVerified: state.user.isAgeVerified,
+            isTosAccepted: state.user.isTosAccepted,
+            username: state.user.username,
+            points: state.user.points,
+            favorites: state.user.favorites,
+            recentVisits: state.user.recentVisits
+          },
+          ui: {
+            theme: state.ui.theme,
+            notifications: state.ui.notifications
+          },
+          dealFilters: state.dealFilters,
+          vendorData: {
+            lastUpdated: state.vendorData.lastUpdated,
+            isCacheInitialized: state.vendorData.isCacheInitialized,
+            cacheStatus: state.vendorData.cacheStatus
+          }
+        };
+
+        await AsyncStorage.setItem('appState', JSON.stringify(stateToStore));
+        Logger.info(LogCategory.STORAGE, 'Persisted state changes');
       } catch (error) {
-        // Error already logged by tryCatch
+        Logger.error(LogCategory.STORAGE, 'Error persisting state changes', { error });
       }
     };
 
     persistStateChanges();
-  }, [state.user.points, state.user.favorites, state.user.recentVisits, state.ui.theme, state.ui.notifications]);
+  }, [
+    state.user.isAgeVerified,
+    state.user.isTosAccepted,
+    state.user.username,
+    state.user.points,
+    state.user.favorites,
+    state.user.recentVisits,
+    state.ui.theme,
+    state.ui.notifications,
+    state.dealFilters,
+    state.vendorData.lastUpdated,
+    state.vendorData.isCacheInitialized,
+    state.vendorData.cacheStatus
+  ]);
 
   return (
     <AppStateContext.Provider value={{ state, dispatch }}>
@@ -471,6 +537,11 @@ export const AppActions = {
   updateVendorData: (vendors) => ({
     type: ActionTypes.UPDATE_VENDOR_DATA,
     payload: { vendors }
+  }),
+  
+  updateVendorCacheStatus: (status) => ({
+    type: ActionTypes.UPDATE_VENDOR_CACHE_STATUS,
+    payload: status
   }),
   
   updateDealFilters: (filters) => ({

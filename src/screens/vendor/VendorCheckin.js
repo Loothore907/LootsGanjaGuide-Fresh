@@ -57,7 +57,7 @@ import { useAppState, AppActions } from '../../context/AppStateContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
-import { checkInAtVendor, getVendorById } from '../../services/ServiceProvider';
+import serviceProvider from '../../services/ServiceProvider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import redemptionService from '../../services/RedemptionService';
 import locationService from '../../services/LocationService';
@@ -211,12 +211,15 @@ const VendorCheckin = ({ route, navigation }) => {
     setIsLoading(true);
     try {
       await tryCatch(async () => {
-        // Get vendor information
-        const vendor = await getVendorById(id);
+        // Convert potential numeric string ID to string explicitly
+        const vendorIdStr = String(id);
+        
+        // Get vendor information - use direct getVendorById function
+        const vendor = await getVendorById(vendorIdStr);
         
         // Check if vendor exists
         if (!vendor) {
-          throw new Error(`No vendor found with ID: ${id}`);
+          throw new Error(`No vendor found with ID: ${vendorIdStr}`);
         }
         
         // Ensure hasQrCode property exists
@@ -224,7 +227,7 @@ const VendorCheckin = ({ route, navigation }) => {
           // Default to true for safety if not specified
           vendor.hasQrCode = true;
           Logger.warn(LogCategory.VENDOR, 'Vendor missing hasQrCode property, defaulting to true', {
-            vendorId: id,
+            vendorId: vendorIdStr,
             vendorName: vendor.name
           });
         }
@@ -236,7 +239,7 @@ const VendorCheckin = ({ route, navigation }) => {
         
         // Process check-in (will happen when user confirms)
         Logger.info(LogCategory.CHECKIN, 'Direct check-in initiated', { 
-          vendorId: id,
+          vendorId: vendorIdStr,
           vendorName: vendor.name,
           hasQrCode: vendor.hasQrCode
         });
@@ -262,12 +265,20 @@ const VendorCheckin = ({ route, navigation }) => {
         const scannedVendorId = data.replace('lootsganja://checkin/', '');
         
         await tryCatch(async () => {
-          // Get vendor information
-          const vendor = await getVendorById(scannedVendorId);
+          // Explicitly convert to string to avoid type issues
+          const vendorIdStr = String(scannedVendorId);
+          
+          // Get vendor information - use direct getVendorById function
+          const vendor = await getVendorById(vendorIdStr);
+          
+          if (!vendor) {
+            throw new Error(`No vendor found with ID: ${vendorIdStr}`);
+          }
+          
           setScannedVendor(vendor);
           
           Logger.info(LogCategory.CHECKIN, 'Scanned check-in QR code', {
-            vendorId: scannedVendorId
+            vendorId: vendorIdStr
           });
         }, LogCategory.CHECKIN, 'processing scanned QR code', true);
       } else {
@@ -336,7 +347,7 @@ const VendorCheckin = ({ route, navigation }) => {
     try {
       await tryCatch(async () => {
         // Process check-in
-        const result = await checkInAtVendor(scannedVendor.id);
+        const result = await serviceProvider.checkInAtVendor(scannedVendor.id);
         
         // Record the deal redemption
         await redemptionService.recordRedemption(
@@ -604,7 +615,7 @@ const VendorCheckin = ({ route, navigation }) => {
     setIsLoading(true);
     try {
       // Process check-in
-      const result = await checkInAtVendor(scannedVendor.id);
+      const result = await serviceProvider.checkInAtVendor(scannedVendor.id);
       
       // Record the deal redemption
       await redemptionService.recordRedemption(

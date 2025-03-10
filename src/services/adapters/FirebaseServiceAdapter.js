@@ -38,11 +38,23 @@ class FirebaseServiceAdapter {
         userLocation = await locationService.getCurrentLocation();
       }
 
-      // Map options to Firebase repository format
+      // Map options to Firebase repository format with ALL possible options
       const repoOptions = {
         ...options,
-        userLocation
+        userLocation: options.userLocation || userLocation
       };
+
+      // Explicit options handling
+      // Add region filtering options
+      if (options.activeRegionsOnly !== undefined) repoOptions.activeRegionsOnly = options.activeRegionsOnly;
+      if (options.includePriorityRegions !== undefined) repoOptions.includePriorityRegions = options.includePriorityRegions;
+      if (options.includeUnknownRegions !== undefined) repoOptions.includeUnknownRegions = options.includeUnknownRegions;
+      if (options.includeAllStatuses !== undefined) repoOptions.includeAllStatuses = options.includeAllStatuses;
+      if (options.ignoreDistance !== undefined) repoOptions.ignoreDistance = options.ignoreDistance;
+      
+      // Region data 
+      if (options.activeRegions) repoOptions.activeRegions = options.activeRegions;
+      if (options.priorityRegions) repoOptions.priorityRegions = options.priorityRegions;
 
       // Convert filters if present
       if (options.dealType) {
@@ -52,6 +64,8 @@ class FirebaseServiceAdapter {
         ];
       }
 
+      Logger.info(LogCategory.VENDORS, 'Getting all vendors through adapter', { options: repoOptions });
+      
       // Get vendors from Firebase
       return await this.vendorRepository.getAll(repoOptions);
     } catch (error) {
@@ -182,6 +196,27 @@ class FirebaseServiceAdapter {
         userLocation
       };
       
+      // Pass region filtering options directly to the repository
+      if (options.activeRegionsOnly !== undefined) {
+        repoOptions.activeRegionsOnly = options.activeRegionsOnly;
+      }
+      
+      if (options.includePriorityRegions !== undefined) {
+        repoOptions.includePriorityRegions = options.includePriorityRegions;
+      }
+      
+      if (options.includeUnknownRegions !== undefined) {
+        repoOptions.includeUnknownRegions = options.includeUnknownRegions;
+      }
+      
+      if (options.activeRegions) {
+        repoOptions.activeRegions = options.activeRegions;
+      }
+      
+      if (options.priorityRegions) {
+        repoOptions.priorityRegions = options.priorityRegions;
+      }
+      
       // Get daily deals from Firebase
       return await this.dealRepository.getDailyDeals(day, repoOptions);
     } catch (error) {
@@ -204,6 +239,27 @@ class FirebaseServiceAdapter {
         userLocation
       };
       
+      // Pass region filtering options directly to the repository
+      if (options.activeRegionsOnly !== undefined) {
+        repoOptions.activeRegionsOnly = options.activeRegionsOnly;
+      }
+      
+      if (options.includePriorityRegions !== undefined) {
+        repoOptions.includePriorityRegions = options.includePriorityRegions;
+      }
+      
+      if (options.includeUnknownRegions !== undefined) {
+        repoOptions.includeUnknownRegions = options.includeUnknownRegions;
+      }
+      
+      if (options.activeRegions) {
+        repoOptions.activeRegions = options.activeRegions;
+      }
+      
+      if (options.priorityRegions) {
+        repoOptions.priorityRegions = options.priorityRegions;
+      }
+      
       // Get birthday deals from Firebase
       return await this.dealRepository.getBirthdayDeals(repoOptions);
     } catch (error) {
@@ -225,6 +281,27 @@ class FirebaseServiceAdapter {
         ...options,
         userLocation
       };
+      
+      // Pass region filtering options directly to the repository
+      if (options.activeRegionsOnly !== undefined) {
+        repoOptions.activeRegionsOnly = options.activeRegionsOnly;
+      }
+      
+      if (options.includePriorityRegions !== undefined) {
+        repoOptions.includePriorityRegions = options.includePriorityRegions;
+      }
+      
+      if (options.includeUnknownRegions !== undefined) {
+        repoOptions.includeUnknownRegions = options.includeUnknownRegions;
+      }
+      
+      if (options.activeRegions) {
+        repoOptions.activeRegions = options.activeRegions;
+      }
+      
+      if (options.priorityRegions) {
+        repoOptions.priorityRegions = options.priorityRegions;
+      }
       
       // Get special deals from Firebase
       return await this.dealRepository.getSpecialDeals(repoOptions);

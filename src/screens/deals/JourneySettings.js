@@ -11,7 +11,7 @@ import {
 import { 
   Text, 
   Button, 
-  Slider, 
+  Slider as RNESlider, 
   Icon
 } from '@rneui/themed';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,6 +20,42 @@ import routeService from '../../services/RouteService';
 import locationService from '../../services/LocationService';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import * as Location from 'expo-location';
+
+/**
+ * Custom Slider component that uses modern JavaScript parameter defaults
+ * This avoids the deprecated defaultProps warning
+ */
+const Slider = ({
+  value = 0,
+  onValueChange = () => {},
+  minimumValue = 0,
+  maximumValue = 1,
+  step = 0,
+  disabled = false,
+  thumbStyle = {},
+  thumbProps = {},
+  trackStyle = {},
+  minimumTrackTintColor = '#3f3f3f',
+  maximumTrackTintColor = '#b3b3b3',
+  ...otherProps
+}) => {
+  return (
+    <RNESlider
+      value={value}
+      onValueChange={onValueChange}
+      minimumValue={minimumValue}
+      maximumValue={maximumValue}
+      step={step}
+      disabled={disabled}
+      thumbStyle={thumbStyle}
+      thumbProps={thumbProps}
+      trackStyle={trackStyle}
+      minimumTrackTintColor={minimumTrackTintColor}
+      maximumTrackTintColor={maximumTrackTintColor}
+      {...otherProps}
+    />
+  );
+};
 
 const JourneySettings = ({ navigation, route }) => {
   const { state, dispatch } = useAppState();
@@ -220,6 +256,7 @@ const JourneySettings = ({ navigation, route }) => {
             }}
             trackStyle={styles.trackStyle}
             minimumTrackTintColor="#4CAF50"
+            maximumTrackTintColor="#D8D8D8"
           />
           <View style={styles.sliderLabels}>
             <Text>1</Text>
@@ -247,6 +284,7 @@ const JourneySettings = ({ navigation, route }) => {
             }}
             trackStyle={styles.trackStyle}
             minimumTrackTintColor="#4CAF50"
+            maximumTrackTintColor="#D8D8D8"
           />
           <View style={styles.sliderLabels}>
             <Text>5</Text>

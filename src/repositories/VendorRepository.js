@@ -18,9 +18,11 @@ import {
   GeoPoint,
   runTransaction,
   setDoc,
-  addDoc
+  addDoc,
+  deleteDoc
 } from 'firebase/firestore';
 import { isValidVendor } from '../types/Schema';
+import vendorCacheService from '../services/VendorCacheService';
 
 /**
  * Repository for vendor-related Firestore operations
@@ -33,6 +35,7 @@ class VendorRepository extends BaseRepository {
 
   /**
    * Get all vendors with adaptive schema handling
+   * Using cached vendors for improved performance
    * @param {Object} options - Filter options
    * @returns {Promise<Array>} - Array of vendors
    */
@@ -40,112 +43,78 @@ class VendorRepository extends BaseRepository {
     try {
       Logger.info(LogCategory.VENDORS, 'Getting all vendors', { options });
       
-      // STEP 1: Build initial query - limit fields where possible for performance
-      let q = this.collectionRef;
-      
-      // Add preliminary filters where we know the schema
-      if (options.isPartner !== undefined) {
-        q = query(q, where('isPartner', '==', options.isPartner));
+      // Use cache for vendor loading if enabled
+      if (!options.skipCache && vendorCacheService.isCacheLoaded()) {
+        // Apply filters in memory using our cache service
+        return vendorCacheService.getAllVendors(options);
       }
       
-      // Checking status field (based on screenshot showing "Active-Operating")
-      if (options.activeRegionsOnly !== false) {
-        q = query(q, where('status', '==', 'Active-Operating'));
+      // If cache is not available, get all collections to query
+      const collectionsToQuery = [this.collectionRef]; // Always include main vendors collection
+      
+      // Include priority vendors if explicitly requested or if we need to search in all collections
+      if (options.includePriorityRegions || options.includeAllRegions) {
+        collectionsToQuery.push(this.priorityVendorsCollection);
       }
       
-      // STEP 2: Execute query
-      const querySnapshot = await getDocs(q);
+      // Include other vendors if explicitly requested or if we need to search in all collections
+      if (options.includeUnknownRegions || options.includeAllRegions) {
+        collectionsToQuery.push(this.otherVendorsCollection);
+      }
+      
+      // Store all vendors here
       let allVendors = [];
       
-      // STEP 3: Process each vendor and normalize schema
-      querySnapshot.forEach(doc => {
+      // Query each collection and merge results
+      for (const collectionRef of collectionsToQuery) {
         try {
-          const rawVendor = { id: doc.id, ...doc.data() };
+          const querySnapshot = await getDocs(collectionRef);
           
-          // Log the first vendor structure for debugging
-          if (allVendors.length === 0) {
-            Logger.debug(LogCategory.VENDORS, 'First vendor structure:', {
-              id: rawVendor.id,
-              hasStatus: !!rawVendor.status,
-              status: rawVendor.status,
-              hasCoordinates: !!(rawVendor.location && rawVendor.location.coordinates),
-              coordinatesStructure: rawVendor.location && rawVendor.location.coordinates ? 
-                                  'nested' : 
-                                  (rawVendor.location && typeof rawVendor.location.latitude === 'number' ? 
-                                  'flat' : 'unknown')
-            });
-          }
-          
-          // Normalize vendor to match expected schema
-          const normalizedVendor = this.normalizeVendorSchema(rawVendor);
-          
-          // Add to results
-          allVendors.push(normalizedVendor);
-        } catch (vendorError) {
-          Logger.warn(LogCategory.VENDORS, `Error normalizing vendor ${doc.id}`, { error: vendorError });
+          // Process each vendor and normalize schema
+          querySnapshot.forEach(doc => {
+            try {
+              const rawVendor = { id: doc.id, ...doc.data() };
+              
+              // Normalize vendor to match expected schema
+              const normalizedVendor = this.normalizeVendorSchema(rawVendor);
+              
+              // Add to results
+              allVendors.push(normalizedVendor);
+            } catch (vendorError) {
+              Logger.warn(LogCategory.VENDORS, `Error normalizing vendor ${doc.id}`, { error: vendorError });
+            }
+          });
+        } catch (queryError) {
+          Logger.error(LogCategory.VENDORS, 'Error querying collection', { error: queryError });
+          // Continue with other collections
         }
-      });
-      
-      // STEP 4: Apply additional filters based on normalized data
-      let filteredVendors = [...allVendors];
-      
-      // Apply region filtering based on address/zip code
-      if (options.activeRegionsOnly !== false) {
-        // Our screenshot shows no "region" field, but we can use zip code filtering from region.js
-        filteredVendors = allVendors.filter(vendor => {
-          // Consider active if status is "Active-Operating"
-          if (vendor.status === 'Active-Operating') {
-            return true;
-          }
-          
-          // Extract zip code from address and check if it's in Anchorage
-          if (vendor.location && vendor.location.address) {
-            const zipCode = this.extractZipCodeFromAddress(vendor.location.address);
-            if (zipCode) {
-              // Anchorage zip codes range from 99501 to 99524
-              const numericZip = parseInt(zipCode);
-              if (numericZip >= 99501 && numericZip <= 99524) {
-                return true;
-              }
-            }
-            
-            // Check if address contains "Anchorage"
-            if (vendor.location.address.includes('Anchorage')) {
-              return true;
-            }
-          }
-          
-          // Default to include in dev mode
-          return __DEV__;
-        });
       }
       
-      // Apply deal type filters
-      if (options.dealType) {
-        filteredVendors = filteredVendors.filter(vendor => {
-          const deals = vendor.deals || {};
-          
-          switch (options.dealType) {
-            case 'birthday':
-              return !!deals.birthday;
-            case 'daily':
-              if (options.day) {
-                return deals.daily && deals.daily[options.day] && 
-                       Array.isArray(deals.daily[options.day]) && 
-                       deals.daily[options.day].length > 0;
-              } else {
-                return !!deals.daily && Object.keys(deals.daily).length > 0;
-              }
-            case 'special':
-              return Array.isArray(deals.special) && deals.special.length > 0;
-            default:
-              return false;
-          }
-        });
+      // Apply filters based on normalized data
+      let filteredVendors = [...allVendors];
+      
+      // Apply region filters if specified
+      if (options.regionId) {
+        filteredVendors = filteredVendors.filter(vendor => 
+          vendor.regionInfo && vendor.regionInfo.regionId === options.regionId
+        );
+      }
+      
+      // Filter by region status
+      if (options.onlyActiveRegions === true) {
+        filteredVendors = filteredVendors.filter(vendor => 
+          vendor.regionInfo && vendor.regionInfo.inActiveRegion
+        );
+      }
+      
+      if (options.onlyPriorityRegions === true) {
+        filteredVendors = filteredVendors.filter(vendor => 
+          vendor.regionInfo && vendor.regionInfo.inPriorityRegion
+        );
       }
       
       // Add distance calculations
-      if (options.userLocation) {
+      if (options.userLocation && !options.ignoreDistance) {
         filteredVendors = filteredVendors.map(vendor => {
           const coords = vendor.location && vendor.location.coordinates;
           if (coords && typeof coords.latitude === 'number' && typeof coords.longitude === 'number') {
@@ -155,6 +124,8 @@ class VendorRepository extends BaseRepository {
               coords.latitude,
               coords.longitude
             );
+          } else {
+            vendor.distance = Infinity;
           }
           return vendor;
         });
@@ -174,15 +145,79 @@ class VendorRepository extends BaseRepository {
         });
       }
       
-      // Apply limit if specified
-      if (options.limit && options.limit > 0) {
+      // Apply limit to final results if specified
+      if (options.limit && options.limit > 0 && !options.skipFinalLimit) {
         filteredVendors = filteredVendors.slice(0, options.limit);
+      }
+      
+      // Return empty array if no vendors found
+      if (!filteredVendors || filteredVendors.length === 0) {
+        Logger.warn(LogCategory.VENDORS, 'No vendors found matching criteria');
+        return [];
       }
       
       Logger.info(LogCategory.VENDORS, `Found ${filteredVendors.length} vendors out of ${allVendors.length} total`);
       return filteredVendors;
     } catch (error) {
       Logger.error(LogCategory.VENDORS, 'Error getting vendors', { error });
+      return []; // Return empty array instead of throwing
+    }
+  }
+
+  /**
+   * Get a vendor by ID with support for multiple collections
+   * Using cached vendors for improved performance
+   * @param {string} id - Vendor ID
+   * @returns {Promise<Object|null>} - Vendor document or null if not found
+   */
+  async getById(id) {
+    try {
+      if (!id) {
+        Logger.warn(LogCategory.VENDORS, 'getById called with no ID');
+        return null;
+      }
+      
+      // First try to get from cache for improved performance
+      if (vendorCacheService.isCacheLoaded()) {
+        const cachedVendor = vendorCacheService.getVendorById(id);
+        if (cachedVendor) {
+          return cachedVendor;
+        }
+        // If not in cache but cache is loaded, it likely doesn't exist
+        Logger.warn(LogCategory.VENDORS, `Vendor with ID ${id} not found in cache, trying database`);
+      }
+
+      // If not found in cache or cache is not loaded, try the database
+      let vendorId = id;
+      if (typeof id === 'string' && /^\d+$/.test(id)) {
+        vendorId = parseInt(id, 10);
+      }
+      
+      // First try the main vendors collection
+      const docRef = doc(this.collectionRef, vendorId.toString());
+      let docSnap = await getDoc(docRef);
+      
+      // If not found, try priority vendors collection
+      if (!docSnap.exists()) {
+        const priorityDocRef = doc(this.priorityVendorsCollection, vendorId.toString());
+        docSnap = await getDoc(priorityDocRef);
+      }
+      
+      // If still not found, try other vendors collection
+      if (!docSnap.exists()) {
+        const otherDocRef = doc(this.otherVendorsCollection, vendorId.toString());
+        docSnap = await getDoc(otherDocRef);
+      }
+      
+      if (docSnap.exists()) {
+        const vendor = { id: vendorId.toString(), ...docSnap.data() };
+        return this.normalizeVendorSchema(this.normalizeTimestamps(vendor));
+      }
+      
+      Logger.info(LogCategory.VENDORS, `No vendor found with ID: ${vendorId} in any collection`);
+      return null;
+    } catch (error) {
+      Logger.error(LogCategory.VENDORS, `Error getting vendor with ID: ${id}`, { error });
       throw error;
     }
   }
@@ -236,10 +271,17 @@ class VendorRepository extends BaseRepository {
       if (!normalized.location.address && normalized.location.formattedAddress) {
         normalized.location.address = normalized.location.formattedAddress;
       }
+      
+      // Ensure zipCode is preserved if it exists
+      if (!normalized.location.zipCode && normalized.location.address) {
+        // Try to extract from address if not present
+        normalized.location.zipCode = this.extractZipCodeFromAddress(normalized.location.address);
+      }
     } else {
       // Create empty location if missing
       normalized.location = {
         address: 'Address not available',
+        zipCode: null,
         coordinates: {
           latitude: 61.2181,  // Default to Anchorage
           longitude: -149.9003
@@ -285,6 +327,16 @@ class VendorRepository extends BaseRepository {
       if (!normalized.deals.special) {
         normalized.deals.special = [];
       }
+    }
+    
+    // Ensure regionInfo structure
+    if (!normalized.regionInfo) {
+      normalized.regionInfo = {
+        inActiveRegion: false,
+        inPriorityRegion: false,
+        regionId: null,
+        zipCode: this.extractZipCodeFromAddress(normalized?.location?.address)
+      };
     }
     
     return normalized;
@@ -638,6 +690,357 @@ class VendorRepository extends BaseRepository {
    */
   deg2rad(deg) {
     return deg * (Math.PI / 180);
+  }
+
+  /**
+   * Get active regions from the regions collection
+   * @returns {Promise<Array>} - Array of active region objects
+   */
+  async getActiveRegions() {
+    try {
+      Logger.info(LogCategory.REGIONS, 'Getting active regions');
+      
+      const q = query(this.regionsCollection, where('isActive', '==', true));
+      const querySnapshot = await getDocs(q);
+      
+      const activeRegions = [];
+      querySnapshot.forEach(doc => {
+        activeRegions.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+      
+      Logger.info(LogCategory.REGIONS, `Found ${activeRegions.length} active regions`);
+      return activeRegions;
+    } catch (error) {
+      Logger.error(LogCategory.REGIONS, 'Error getting active regions', { error });
+      throw error;
+    }
+  }
+
+  /**
+   * Get priority regions from the regions collection
+   * @returns {Promise<Array>} - Array of priority region objects
+   */
+  async getPriorityRegions() {
+    try {
+      Logger.info(LogCategory.REGIONS, 'Getting priority regions');
+      
+      const q = query(this.regionsCollection, where('isPriority', '==', true));
+      const querySnapshot = await getDocs(q);
+      
+      const priorityRegions = [];
+      querySnapshot.forEach(doc => {
+        priorityRegions.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+      
+      Logger.info(LogCategory.REGIONS, `Found ${priorityRegions.length} priority regions`);
+      return priorityRegions;
+    } catch (error) {
+      Logger.error(LogCategory.REGIONS, 'Error getting priority regions', { error });
+      throw error;
+    }
+  }
+
+  /**
+   * Determine which collection a vendor belongs to based on its region
+   * @param {Object} vendor - Vendor object with location data
+   * @param {Array} activeRegions - List of active regions
+   * @param {Array} priorityRegions - List of priority regions
+   * @returns {string} - Collection name: 'vendors', 'priority_vendors', or 'other_vendors'
+   */
+  determineVendorCollection(vendor, activeRegions, priorityRegions) {
+    // Extract zipcode from vendor address
+    const zipCode = this.extractZipCodeFromAddress(vendor?.location?.address);
+    if (!zipCode) {
+      Logger.debug(LogCategory.VENDORS, `No zip code found for vendor ${vendor.id}, routing to other_vendors`);
+      return 'other_vendors';
+    }
+    
+    // Check if vendor is in an active region
+    const inActiveRegion = activeRegions.some(region => 
+      region.zipCodes && region.zipCodes.includes(zipCode)
+    );
+    
+    if (inActiveRegion) {
+      return 'vendors';
+    }
+    
+    // Check if vendor is in a priority region (but not active)
+    const inPriorityRegion = priorityRegions.some(region => 
+      region.zipCodes && region.zipCodes.includes(zipCode)
+    );
+    
+    if (inPriorityRegion) {
+      return 'priority_vendors';
+    }
+    
+    // Default to other_vendors
+    return 'other_vendors';
+  }
+
+  /**
+   * Enhance vendor with region information
+   * @param {Object} vendor - Vendor object
+   * @param {Array} activeRegions - List of active regions
+   * @param {Array} priorityRegions - List of priority regions
+   * @returns {Object} - Vendor with regionInfo added
+   */
+  addRegionInfoToVendor(vendor, activeRegions, priorityRegions) {
+    // Create a copy to avoid mutation
+    const enhancedVendor = { ...vendor };
+    
+    // Extract zipcode from vendor address
+    const zipCode = this.extractZipCodeFromAddress(vendor?.location?.address);
+    
+    // Initialize regionInfo
+    enhancedVendor.regionInfo = {
+      inActiveRegion: false,
+      inPriorityRegion: false,
+      regionId: null,
+      zipCode
+    };
+    
+    if (!zipCode) {
+      return enhancedVendor;
+    }
+    
+    // Check if vendor is in an active region
+    const activeRegion = activeRegions.find(region => 
+      region.zipCodes && region.zipCodes.includes(zipCode)
+    );
+    
+    if (activeRegion) {
+      enhancedVendor.regionInfo.inActiveRegion = true;
+      enhancedVendor.regionInfo.inPriorityRegion = true; // Active regions are also priority
+      enhancedVendor.regionInfo.regionId = activeRegion.id;
+      enhancedVendor.regionInfo.regionName = activeRegion.name;
+      return enhancedVendor;
+    }
+    
+    // Check if vendor is in a priority region
+    const priorityRegion = priorityRegions.find(region => 
+      region.zipCodes && region.zipCodes.includes(zipCode)
+    );
+    
+    if (priorityRegion) {
+      enhancedVendor.regionInfo.inPriorityRegion = true;
+      enhancedVendor.regionInfo.regionId = priorityRegion.id;
+      enhancedVendor.regionInfo.regionName = priorityRegion.name;
+    }
+    
+    return enhancedVendor;
+  }
+
+  /**
+   * Distribute a vendor to the appropriate collection based on region
+   * @param {Object} vendor - Vendor object with complete data
+   * @returns {Promise<Object>} - Result of the operation with updated vendor
+   */
+  async distributeVendorToCollection(vendor) {
+    try {
+      // Get active and priority regions
+      const [activeRegions, priorityRegions] = await Promise.all([
+        this.getActiveRegions(),
+        this.getPriorityRegions()
+      ]);
+      
+      // Add region info to vendor
+      const enhancedVendor = this.addRegionInfoToVendor(vendor, activeRegions, priorityRegions);
+      
+      // Determine which collection this vendor belongs to
+      const collectionName = this.determineVendorCollection(vendor, activeRegions, priorityRegions);
+      
+      // Choose the appropriate collection reference
+      let collectionRef;
+      switch (collectionName) {
+        case 'vendors':
+          collectionRef = this.collectionRef;
+          break;
+        case 'priority_vendors':
+          collectionRef = this.priorityVendorsCollection;
+          break;
+        default:
+          collectionRef = this.otherVendorsCollection;
+      }
+      
+      // Store the vendor in the appropriate collection
+      const docRef = doc(collectionRef, enhancedVendor.id.toString());
+      await setDoc(docRef, enhancedVendor, { merge: true });
+      
+      Logger.info(LogCategory.VENDORS, `Distributed vendor ${enhancedVendor.id} to ${collectionName}`, { 
+        regionInfo: enhancedVendor.regionInfo 
+      });
+      
+      return {
+        success: true,
+        vendor: enhancedVendor,
+        collectionName
+      };
+    } catch (error) {
+      Logger.error(LogCategory.VENDORS, 'Error distributing vendor to collection', { 
+        error, 
+        vendorId: vendor.id 
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Move a vendor between collections based on region status changes
+   * @param {string} vendorId - ID of the vendor to move
+   * @returns {Promise<Object>} - Result of the operation
+   */
+  async relocateVendorBasedOnRegion(vendorId) {
+    try {
+      // Get the vendor from all possible collections
+      const vendor = await this.getById(vendorId);
+      
+      if (!vendor) {
+        throw new Error(`Vendor with ID ${vendorId} not found in any collection`);
+      }
+      
+      // First remove from all collections to avoid duplication
+      await Promise.all([
+        deleteDoc(doc(this.collectionRef, vendorId.toString())).catch(() => {}),
+        deleteDoc(doc(this.priorityVendorsCollection, vendorId.toString())).catch(() => {}),
+        deleteDoc(doc(this.otherVendorsCollection, vendorId.toString())).catch(() => {})
+      ]);
+      
+      // Redistribute to the appropriate collection
+      const result = await this.distributeVendorToCollection(vendor);
+      
+      return result;
+    } catch (error) {
+      Logger.error(LogCategory.VENDORS, 'Error relocating vendor', { error, vendorId });
+      throw error;
+    }
+  }
+
+  /**
+   * Scan all vendors and redistribute them to appropriate collections
+   * Use this when region definitions change
+   * @returns {Promise<Object>} - Summary of redistribution
+   */
+  async redistributeAllVendors() {
+    try {
+      Logger.info(LogCategory.VENDORS, 'Starting vendor redistribution');
+      
+      // Get active and priority regions
+      const [activeRegions, priorityRegions] = await Promise.all([
+        this.getActiveRegions(),
+        this.getPriorityRegions()
+      ]);
+      
+      // Log region information
+      Logger.info(LogCategory.REGIONS, 'Region distribution', {
+        activeRegionsCount: activeRegions.length,
+        priorityRegionsCount: priorityRegions.length
+      });
+      
+      // Query all collections to get all vendors
+      const collections = [
+        this.collectionRef,
+        this.priorityVendorsCollection,
+        this.otherVendorsCollection
+      ];
+      
+      const stats = {
+        total: 0,
+        movedToActive: 0,
+        movedToPriority: 0,
+        movedToOther: 0,
+        errors: 0
+      };
+      
+      // Process each collection
+      for (const collectionRef of collections) {
+        const snapshot = await getDocs(collectionRef);
+        
+        // Process vendors in batches to avoid overwhelming Firestore
+        const batchSize = 100;
+        const batches = [];
+        let currentBatch = [];
+        
+        snapshot.forEach(doc => {
+          const vendor = { id: doc.id, ...doc.data() };
+          currentBatch.push(vendor);
+          
+          if (currentBatch.length >= batchSize) {
+            batches.push([...currentBatch]);
+            currentBatch = [];
+          }
+        });
+        
+        // Add the remaining vendors
+        if (currentBatch.length > 0) {
+          batches.push(currentBatch);
+        }
+        
+        // Process each batch
+        for (const batch of batches) {
+          const batchPromises = batch.map(async (vendor) => {
+            try {
+              stats.total++;
+              
+              // Add region info to vendor
+              const enhancedVendor = this.addRegionInfoToVendor(vendor, activeRegions, priorityRegions);
+              
+              // Determine which collection this vendor belongs to
+              const collectionName = this.determineVendorCollection(enhancedVendor, activeRegions, priorityRegions);
+              
+              // Choose the appropriate collection reference
+              let targetCollectionRef;
+              switch (collectionName) {
+                case 'vendors':
+                  targetCollectionRef = this.collectionRef;
+                  stats.movedToActive++;
+                  break;
+                case 'priority_vendors':
+                  targetCollectionRef = this.priorityVendorsCollection;
+                  stats.movedToPriority++;
+                  break;
+                default:
+                  targetCollectionRef = this.otherVendorsCollection;
+                  stats.movedToOther++;
+              }
+              
+              // Remove from current collection if it's not the target collection
+              if (collectionRef !== targetCollectionRef) {
+                await deleteDoc(doc(collectionRef, vendor.id.toString())).catch(() => {});
+              }
+              
+              // Store the vendor in the appropriate collection
+              const docRef = doc(targetCollectionRef, enhancedVendor.id.toString());
+              await setDoc(docRef, enhancedVendor, { merge: true });
+            } catch (error) {
+              stats.errors++;
+              Logger.error(LogCategory.VENDORS, 'Error redistributing vendor', { 
+                error, 
+                vendorId: vendor.id 
+              });
+            }
+          });
+          
+          // Wait for all vendors in this batch to be processed
+          await Promise.all(batchPromises);
+        }
+      }
+      
+      Logger.info(LogCategory.VENDORS, 'Vendor redistribution complete', { stats });
+      
+      return {
+        success: true,
+        stats
+      };
+    } catch (error) {
+      Logger.error(LogCategory.VENDORS, 'Error redistributing vendors', { error });
+      throw error;
+    }
   }
 }
 

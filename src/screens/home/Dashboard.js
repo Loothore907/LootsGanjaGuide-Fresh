@@ -22,6 +22,7 @@ import routeService from '../../services/RouteService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import redemptionService from '../../services/RedemptionService';
 import serviceProvider from '../../services/ServiceProvider';
+import vendorCacheService from '../../services/VendorCacheService';
 
 const { width } = Dimensions.get('window');
 
@@ -105,70 +106,19 @@ const Dashboard = ({ navigation }) => {
   // Load all dashboard data
   const loadData = async () => {
     setIsLoading(true);
-    setError(null);
     
     try {
       await tryCatch(async () => {
-        // Skip featured deals - remove this section
-        // let featuredDeals = [];
-        // try {
-        //   featuredDeals = await serviceProvider.getFeaturedDeals({ limit: 20 });
-        //   Logger.info(LogCategory.DEALS, 'Loaded featured deals', { count: featuredDeals.length });
-        // } catch (dealsError) {
-        //   Logger.error(LogCategory.DEALS, 'Error getting featured deals', { error: dealsError });
-        //   // Continue with empty deals array rather than failing completely
-        // }
+        // Get vendors from cache
+        const vendors = vendorCacheService.getAllVendors();
         
-        // Focus on getting vendors only with active status filtering
-        let vendors = [];
-        try {
-          vendors = await serviceProvider.getAllVendors({ 
-            limit: 10,
-            activeRegionsOnly: true
-          });
-          Logger.info(LogCategory.VENDORS, 'Loaded vendors for dashboard', { count: vendors.length });
-        } catch (vendorsError) {
-          Logger.error(LogCategory.VENDORS, 'Error getting vendors', { error: vendorsError });
-          // Continue with empty vendors array
-        }
+        // Get recent vendors
+        const recentVendors = await serviceProvider.getRecentVendors(5);
         
-        // Get user's recent visits
-        let recentVendors = [];
-        try {
-          recentVendors = await serviceProvider.getRecentVendors(10);
-          Logger.info(LogCategory.VENDORS, 'Loaded recent vendors', { count: recentVendors.length });
-        } catch (recentError) {
-          Logger.error(LogCategory.VENDORS, 'Error getting recent vendors', { error: recentError });
-          // Continue with empty recent vendors array
-        }
+        // Get metrics
+        const stats = await serviceProvider.getMetrics();
         
-        // Get favorites - safely
-        let favorites = [];
-        try {
-          favorites = await serviceProvider.getFavorites();
-        } catch (favoritesError) {
-          Logger.error(LogCategory.VENDORS, 'Error getting favorites', { error: favoritesError });
-          // Use favorites from state as fallback
-          favorites = state.user.favorites.map(id => {
-            const vendor = vendors.find(v => v.id === id);
-            return vendor || { id };
-          }).filter(v => v.name); // Filter out any that don't have a name
-        }
-        
-        // Refresh metrics
-        let stats = {
-          today: { count: 0, uniqueVendors: 0 },
-          total: { count: 0, uniqueVendors: 0 }
-        };
-        
-        try {
-          stats = await redemptionService.getRedemptionStats();
-        } catch (statsError) {
-          Logger.error(LogCategory.REDEMPTION, 'Error getting redemption stats', { error: statsError });
-          // Continue with default stats
-        }
-        
-        // Check for available deals
+        // Count available deals
         let birthdayDeals = 0;
         let dailyDeals = 0;
         let specialDeals = 0;
@@ -192,12 +142,18 @@ const Dashboard = ({ navigation }) => {
           ).length;
           
           // Count special deals from vendors with active special deals
-          specialDeals = vendors.filter(vendor => 
-            vendor.deals && 
-            vendor.deals.special && 
-            vendor.deals.special.length > 0 &&
-            vendor.status === "Active-Operating"
-          ).length;
+          const now = new Date();
+          specialDeals = vendors.filter(vendor => {
+            if (!vendor.deals?.special || !Array.isArray(vendor.deals.special) || vendor.status !== "Active-Operating") {
+              return false;
+            }
+            return vendor.deals.special.some(deal => {
+              if (!deal.startDate || !deal.endDate) return true;
+              const startDate = new Date(deal.startDate);
+              const endDate = new Date(deal.endDate);
+              return now >= startDate && now <= endDate;
+            });
+          }).length;
           
           Logger.info(LogCategory.DEALS, 'Deal availability checked', {
             birthdayCount: birthdayDeals,
@@ -208,8 +164,7 @@ const Dashboard = ({ navigation }) => {
           Logger.error(LogCategory.DEALS, 'Error counting available deals', { error: countError });
         }
         
-        // Update state with all loaded data - remove featuredDeals
-        // setFeaturedDeals(featuredDeals); <- Remove this
+        // Update state with all loaded data
         setVendors(vendors);
         setRecentVendors(recentVendors);
         setMetrics(stats);
@@ -221,15 +176,11 @@ const Dashboard = ({ navigation }) => {
         if (vendors.length > 0) {
           dispatch(AppActions.updateVendorData(vendors));
         }
-        
-        Logger.info(LogCategory.GENERAL, 'Dashboard data loaded successfully');
       }, LogCategory.GENERAL, 'loading dashboard data', true);
     } catch (error) {
       // Error already logged by tryCatch
-      setError('Failed to load dashboard data. Please try again.');
     } finally {
       setIsLoading(false);
-      setRefreshing(false);
     }
   };
   

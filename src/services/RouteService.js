@@ -2,11 +2,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { Logger, LogCategory } from './LoggingService';
-import { tryCatch } from '../utils/ErrorHandler';
+import { handleError, tryCatch } from '../utils/ErrorHandler';
 import locationService from './LocationService';
 import env from '../config/env';
-import { getAllVendors } from './ServiceProvider';
+import serviceProvider from './ServiceProvider';
 import redemptionService from './RedemptionService';
+import vendorCacheService from './VendorCacheService';
 
 /**
  * Service for route planning, optimization, and journey tracking
@@ -71,66 +72,61 @@ class RouteService {
   }
   
   /**
-   * Create a journey route based on deal type and preferences
+   * Create an optimized route
    * @param {Object} options - Route options
-   * @param {string} options.dealType - Type of deal to search for (birthday, daily, special)
+   * @param {string} options.dealType - Type of deals to include
    * @param {number} options.maxVendors - Maximum number of vendors to include
    * @param {number} options.maxDistance - Maximum distance in miles
-   * @param {Object} options.startLocation - Starting coordinates {latitude, longitude}
-   * @returns {Promise<Object>} - Route object with vendors and path
+   * @param {Object} options.startLocation - Starting location coordinates
+   * @returns {Promise<Object>} - Route object with vendors and navigation info
    */
   async createRoute(options) {
-    const { dealType, maxVendors = 3, maxDistance = 15, startLocation } = options;
-    
-    Logger.info(LogCategory.ROUTE, 'Creating route', { 
-      dealType, maxVendors, maxDistance, startLocation 
-    });
-    
     try {
-      // 1. Get all vendors
-      let allVendors = await getAllVendors();
+      Logger.info(LogCategory.NAVIGATION, 'Creating route', { options });
       
-      // 2. Filter vendors by deal type
-      let filteredVendors = this.filterVendorsByDealType(allVendors, dealType);
+      const {
+        dealType,
+        maxDistance = 25,
+        maxVendors = 5,
+        startLocation,
+        skipVendorIds = []
+      } = options;
       
-      // 3. Filter out vendors with recently redeemed deals
-      filteredVendors = await redemptionService.filterRedeemableVendors(filteredVendors, dealType);
+      // Get vendors from cache
+      const vendors = vendorCacheService.getAllVendors({
+        userLocation: startLocation
+      });
       
-      Logger.info(LogCategory.ROUTE, `Filtered ${allVendors.length} vendors down to ${filteredVendors.length} based on deal type and redemption status`);
+      // Filter vendors by deal type
+      let filteredVendors = this.filterVendorsByDealType(vendors, dealType);
+      
+      // Filter out skipped vendors
+      if (skipVendorIds.length > 0) {
+        filteredVendors = filteredVendors.filter(vendor => 
+          !skipVendorIds.includes(vendor.id)
+        );
+      }
+      
+      // Filter by distance and sort by proximity
+      filteredVendors = this.filterVendorsByDistance(filteredVendors, startLocation, maxDistance);
+      
+      // Limit number of vendors
+      filteredVendors = filteredVendors.slice(0, maxVendors);
       
       if (filteredVendors.length === 0) {
-        Logger.warn(LogCategory.ROUTE, 'No eligible vendors found for route');
-        return {
-          success: false,
-          error: 'No eligible vendors found with the selected deal type'
-        };
+        throw new Error('No eligible vendors found for route');
       }
       
-      // 4. Filter vendors by distance and sort by proximity
-      if (startLocation) {
-        filteredVendors = this.filterVendorsByDistance(filteredVendors, startLocation, maxDistance);
-      }
-      
-      // 5. Limit to max vendors and optimize route
-      const routeVendors = this.optimizeRoute(filteredVendors, startLocation, maxVendors);
-      
-      // 6. Calculate total distance and create route object
-      const totalDistance = this.calculateRouteDistance(routeVendors, startLocation);
-      
-      Logger.info(LogCategory.ROUTE, `Created route with ${routeVendors.length} vendors, total distance: ${totalDistance.toFixed(2)} miles`);
+      // Create route with filtered vendors
+      const route = await this.createRouteFromVendors(filteredVendors, startLocation);
       
       return {
-        success: true,
-        vendors: routeVendors,
-        totalDistance,
-        dealType
+        vendors: filteredVendors,
+        route
       };
     } catch (error) {
-      Logger.error(LogCategory.ROUTE, 'Error creating route', { error });
-      return {
-        success: false,
-        error: 'Failed to create route'
-      };
+      Logger.error(LogCategory.NAVIGATION, 'Error creating route', { error });
+      throw error;
     }
   }
   
@@ -541,6 +537,20 @@ class RouteService {
     } catch (error) {
       Logger.error(LogCategory.STORAGE, 'Error getting journey history', { error });
       return [];
+    }
+  }
+  
+  /**
+   * Get cached route data
+   * @returns {Promise<Object|null>} - Route data or null if not found
+   */
+  async getCachedRouteData() {
+    try {
+      const routeData = await AsyncStorage.getItem('current_route_data');
+      return routeData ? JSON.parse(routeData) : null;
+    } catch (error) {
+      Logger.error(LogCategory.NAVIGATION, 'Error getting cached route data', { error });
+      return null;
     }
   }
 }

@@ -6,6 +6,7 @@ import serviceProvider from '../services/ServiceProvider';
 import { onAuthStateChanged } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import firebaseAuthAdapter from '../services/adapters/FirebaseAuthAdapter';
+import { vendorCacheService } from '../services/VendorCacheService';
 
 /**
  * Handles app initialization tasks
@@ -119,10 +120,10 @@ class AppInitializer {
           return [];
         }),
         
-        // Preload vendors - remove limit to get all vendors
-        serviceProvider.getAllVendors().catch(err => {
-          Logger.warn(LogCategory.VENDORS, 'Failed to preload vendors', { err });
-          return [];
+        // Initialize vendor cache
+        vendorCacheService.initialize().catch(err => {
+          Logger.warn(LogCategory.VENDORS, 'Failed to initialize vendor cache', { err });
+          return false;
         })
       ];
       
