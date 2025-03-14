@@ -6,17 +6,22 @@ import serviceProvider from '../services/ServiceProvider';
 import { onAuthStateChanged } from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import firebaseAuthAdapter from '../services/adapters/FirebaseAuthAdapter';
+import dataLoaderService from '../services/DataLoaderService';
 import { vendorCacheService } from '../services/VendorCacheService';
+import { dealCacheService } from '../services/DealCacheService';
 
 /**
  * Handles app initialization tasks
- * Now exclusively uses Firebase with no mock data
+ * Now exclusively uses Firebase with live data
+ * Includes improved caching functionality
  */
 class AppInitializer {
   constructor() {
     this.isInitialized = false;
     this.authListener = null;
     this.userAuthState = null;
+    this.CACHE_TIMESTAMP_KEY = 'data_cache_timestamp';
+    this.CACHE_MAX_AGE = 60 * 60 * 1000; // 1 hour in milliseconds
   }
 
   /**
@@ -31,40 +36,59 @@ class AppInitializer {
     const { onAuthChange = null } = options;
     
     try {
-      Logger.info(LogCategory.GENERAL, 'Starting app initialization');
+      Logger.info(LogCategory.GENERAL, 'Initializing app');
       
-      // First check if Firebase config is valid
-      if (!hasValidFirebaseConfig()) {
-        throw new Error('Invalid Firebase configuration. Please check your environment variables.');
+      // Check if Firebase is configured
+      if (!hasValidFirebaseConfig) {
+        Logger.error(LogCategory.GENERAL, 'Firebase not configured properly');
+        return false;
       }
       
-      // Initialize Logger
-      await Logger.initialize();
+      // Set up auth listener
+      if (onAuthChange) {
+        this.setupAuthListener(onAuthChange);
+      }
       
-      // Initialize service provider
-      await serviceProvider.initialize();
+      // First, check if we have cached data that can be loaded immediately
+      const hasValidCache = await this.loadFromLocalCache();
       
-      // Initialize Firebase Auth Adapter
-      await firebaseAuthAdapter.initialize();
-      Logger.info(LogCategory.AUTH, 'Firebase Auth Adapter initialized');
+      // Preload app data in the background regardless of cache status
+      // to ensure we have the latest data
+      const dataLoadPromise = this.preloadAppData();
       
-      // Set up Firebase auth state listener
-      this.setupAuthListener(onAuthChange);
+      // If we have valid cache, we can mark as initialized immediately
+      if (hasValidCache) {
+        this.isInitialized = true;
+        
+        // Still wait for the data load to complete in the background
+        dataLoadPromise.then(success => {
+          if (success) {
+            // Save the updated data to cache
+            this.saveToLocalCache();
+          }
+        });
+        
+        Logger.info(LogCategory.GENERAL, 'App initialized with cached data');
+        return true;
+      }
       
-      // Load and cache initial app data in the background
-      this.preloadAppData();
+      // Otherwise, wait for the data load to complete
+      const dataLoaded = await dataLoadPromise;
       
+      if (!dataLoaded) {
+        Logger.error(LogCategory.GENERAL, 'Failed to load app data and no valid cache available');
+        return false;
+      }
+      
+      // Save the loaded data to cache
+      await this.saveToLocalCache();
+      
+      Logger.info(LogCategory.GENERAL, 'Firebase ServiceProvider initialized successfully');
       this.isInitialized = true;
-      Logger.info(LogCategory.GENERAL, 'App initialization completed successfully');
-      
-      // Verify Firebase connection
-      const connected = await serviceProvider.verifyConnection();
-      Logger.info(LogCategory.GENERAL, `Firebase connection status: ${connected ? 'CONNECTED' : 'NOT CONNECTED'}`);
-      
       return true;
     } catch (error) {
-      handleError(error, LogCategory.GENERAL, 'Error during app initialization');
-      return false;
+      Logger.error(LogCategory.GENERAL, 'Error initializing Firebase ServiceProvider', { error });
+      throw error;
     }
   }
 
@@ -108,33 +132,152 @@ class AppInitializer {
 
   /**
    * Preload and cache common app data
+   * @returns {Promise<boolean>} Whether data was loaded successfully
    * @private
    */
   async preloadAppData() {
     try {
-      // Start loading data in parallel
-      const preloadTasks = [
-        // Preload featured deals - increase limit to 20
-        serviceProvider.getFeaturedDeals({ limit: 20 }).catch(err => {
-          Logger.warn(LogCategory.DEALS, 'Failed to preload featured deals', { err });
-          return [];
-        }),
-        
-        // Initialize vendor cache
-        vendorCacheService.initialize().catch(err => {
-          Logger.warn(LogCategory.VENDORS, 'Failed to initialize vendor cache', { err });
-          return false;
-        })
-      ];
-      
-      // Don't await the result - let it load in background
-      Promise.all(preloadTasks).then(() => {
-        Logger.info(LogCategory.GENERAL, 'Initial app data preloaded successfully');
-      }).catch(err => {
-        Logger.warn(LogCategory.GENERAL, 'Some initial data failed to preload', { err });
+      // Use the DataLoaderService to preload all app data
+      const success = await dataLoaderService.initialize({
+        background: true, // Load in background
+        priority: 'high'  // High priority for initial load
       });
+      
+      if (success) {
+        Logger.info(LogCategory.GENERAL, 'Initial app data preloaded successfully');
+      } else {
+        Logger.warn(LogCategory.GENERAL, 'Some data failed to preload');
+      }
+      
+      // Also preload featured deals separately for immediate display
+      serviceProvider.getFeaturedDeals({ limit: 20 }).catch(err => {
+        Logger.warn(LogCategory.DEALS, 'Failed to preload featured deals', { err });
+      });
+      
+      return success;
     } catch (error) {
-      Logger.warn(LogCategory.GENERAL, 'Error during data preloading', { error });
+      Logger.error(LogCategory.GENERAL, 'Error during data preloading', { error });
+      return false;
+    }
+  }
+
+  /**
+   * Try to load data from local cache
+   * @returns {Promise<boolean>} Whether valid cache was loaded
+   */
+  async loadFromLocalCache() {
+    try {
+      // Check for cached data timestamp
+      const cacheTimestamp = await AsyncStorage.getItem(this.CACHE_TIMESTAMP_KEY);
+      
+      if (!cacheTimestamp) {
+        return false;
+      }
+      
+      // Check if cache is still valid (within max age)
+      const timestamp = parseInt(cacheTimestamp, 10);
+      const now = Date.now();
+      const cacheAge = now - timestamp;
+      
+      if (cacheAge > this.CACHE_MAX_AGE) {
+        Logger.info(LogCategory.GENERAL, 'Cache is too old, will refresh', {
+          cacheAge: Math.round(cacheAge / 1000 / 60),
+          maxCacheAge: Math.round(this.CACHE_MAX_AGE / 1000 / 60)
+        });
+        return false;
+      }
+      
+      // Load vendors from cache
+      const vendorsJson = await AsyncStorage.getItem('cached_vendors');
+      if (vendorsJson) {
+        const vendors = JSON.parse(vendorsJson);
+        if (Array.isArray(vendors) && vendors.length > 0) {
+          vendorCacheService.setVendorData(vendors);
+        }
+      }
+      
+      // Load deals from cache
+      const dealsJson = await AsyncStorage.getItem('cached_deals');
+      if (dealsJson) {
+        const deals = JSON.parse(dealsJson);
+        if (Array.isArray(deals) && deals.length > 0) {
+          dealCacheService.setDealData(deals);
+        }
+      }
+      
+      Logger.info(LogCategory.GENERAL, 'Loaded data from local cache', {
+        timestamp: new Date(parseInt(cacheTimestamp, 10)).toISOString(),
+        vendorCount: vendorCacheService.getAllVendors().length,
+        dealCount: dealCacheService.getAllDeals().length
+      });
+      
+      return vendorCacheService.isCacheLoaded() && dealCacheService.isCacheLoaded();
+    } catch (error) {
+      Logger.error(LogCategory.GENERAL, 'Error loading from local cache', { error });
+      return false;
+    }
+  }
+
+  /**
+   * Save current cache to local storage
+   * @returns {Promise<boolean>} Success status
+   */
+  async saveToLocalCache() {
+    try {
+      if (!vendorCacheService.isCacheLoaded() || !dealCacheService.isCacheLoaded()) {
+        Logger.warn(LogCategory.GENERAL, 'Cannot save to cache, data not loaded');
+        return false;
+      }
+      
+      // Save vendors
+      const vendors = vendorCacheService.getAllVendors();
+      await AsyncStorage.setItem('cached_vendors', JSON.stringify(vendors));
+      
+      // Save deals
+      const deals = dealCacheService.getAllDeals();
+      await AsyncStorage.setItem('cached_deals', JSON.stringify(deals));
+      
+      // Save timestamp
+      await AsyncStorage.setItem(this.CACHE_TIMESTAMP_KEY, Date.now().toString());
+      
+      Logger.info(LogCategory.GENERAL, 'Saved data to local cache', {
+        vendorCount: vendors.length,
+        dealCount: deals.length
+      });
+      
+      return true;
+    } catch (error) {
+      Logger.error(LogCategory.GENERAL, 'Error saving to local cache', { error });
+      return false;
+    }
+  }
+
+  /**
+   * Clear all cached data
+   * @returns {Promise<boolean>} Success status
+   */
+  async clearCache() {
+    try {
+      await AsyncStorage.multiRemove([
+        'cached_vendors',
+        'cached_deals',
+        this.CACHE_TIMESTAMP_KEY
+      ]);
+      
+      // Reset in-memory caches if the services have a reset method
+      if (typeof vendorCacheService.reset === 'function') {
+        vendorCacheService.reset();
+      }
+      
+      if (typeof dealCacheService.reset === 'function') {
+        dealCacheService.reset();
+      }
+      
+      Logger.info(LogCategory.GENERAL, 'Cache cleared successfully');
+      return true;
+    } catch (error) {
+      Logger.error(LogCategory.GENERAL, 'Error clearing cache', { error });
+      return false;
     }
   }
 }

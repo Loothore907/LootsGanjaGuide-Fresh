@@ -33,6 +33,7 @@ import JourneyComplete from './src/screens/journey/JourneyComplete';
 import BirthdayDeals from './src/screens/deals/BirthdayDeals';
 import DailyDeals from './src/screens/deals/DailyDeals';
 import SpecialDeals from './src/screens/deals/SpecialDeals';
+import EverydayDeals from './src/screens/deals/EverydayDeals';
 import AllDeals from './src/screens/deals/AllDeals';
 
 // Screen Imports - Profile & Settings
@@ -47,6 +48,9 @@ import { handleError, tryCatch } from './src/utils/ErrorHandler';
 
 // Developer Tools (only loaded in development)
 import DevTools from './src/components/DevTools';
+
+// Import data services
+import { dataLoader, vendorCache } from './services';
 
 // Create navigators
 const Stack = createStackNavigator();
@@ -224,6 +228,11 @@ const AppContent = () => {
           component={SpecialDeals}
           options={{ headerShown: true, title: 'Special Offers' }}
         />
+        <Stack.Screen 
+          name="EverydayDeals" 
+          component={EverydayDeals}
+          options={{ headerShown: true, title: 'Everyday Deals' }}
+        />
 
         {/* Journey Screens */}
         <Stack.Screen 
@@ -236,6 +245,12 @@ const AppContent = () => {
           name="RouteMapView" 
           component={RouteMapView}
           options={{ headerShown: true, title: 'Route Overview' }}
+        />
+
+        <Stack.Screen 
+          name="MapView" 
+          component={MapView}
+          options={{ headerShown: true, title: 'Map View' }}
         />
 
         <Stack.Screen 

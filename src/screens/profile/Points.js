@@ -6,7 +6,8 @@ import {
   ScrollView, 
   TouchableOpacity, 
   ActivityIndicator,
-  FlatList
+  FlatList,
+  Alert
 } from 'react-native';
 import { 
   Text, 
@@ -23,6 +24,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { UserRepository } from '../../repositories/repositoryExports';
+import { auth } from '../../config/firebase';
 
 const Points = ({ navigation }) => {
   const { state, dispatch } = useAppState();
@@ -30,8 +33,7 @@ const Points = ({ navigation }) => {
   const [tabIndex, setTabIndex] = useState(0);
   const [pointsHistory, setPointsHistory] = useState([]);
   const [rewards, setRewards] = useState([]);
-  
-  const points = state.user.points || 0;
+  const [points, setPoints] = useState(state.user.points || 0);
   
   // Load points history and rewards
   useEffect(() => {
@@ -42,73 +44,36 @@ const Points = ({ navigation }) => {
     setIsLoading(true);
     try {
       await tryCatch(async () => {
-        // In a real app, fetch from an API
-        // For now, use mock data
+        // Get current user ID
+        const userId = auth.currentUser?.uid;
+        if (!userId) {
+          Logger.warn(LogCategory.USER, 'Cannot load points: User not logged in');
+          return;
+        }
         
-        // Mock points history
-        setPointsHistory([
-          {
-            id: '1',
-            vendorId: 'v1',
-            vendorName: 'Green Horizon',
-            type: 'check-in',
-            points: 10,
-            date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
-          },
-          {
-            id: '2',
-            vendorId: 'v3',
-            vendorName: 'Northern Lights Cannabis',
-            type: 'check-in',
-            points: 10,
-            date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString()
-          },
-          {
-            id: '3',
-            vendorId: 'v2',
-            vendorName: 'Aurora Dispensary',
-            type: 'journey-completion',
-            points: 25,
-            date: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString()
-          }
-        ]);
+        // Get points history from repository
+        const history = await UserRepository.getPointsHistory(userId);
+        setPointsHistory(history || []);
         
-        // Mock rewards
-        setRewards([
-          {
-            id: '1',
-            title: 'Free Pre-Roll',
-            description: 'Redeem your points for a free pre-roll at participating vendors.',
-            pointsCost: 100,
-            image: 'https://example.com/images/pre-roll.jpg'
-          },
-          {
-            id: '2',
-            title: '10% Off Any Purchase',
-            description: 'Get 10% off your next purchase at any participating vendor.',
-            pointsCost: 150,
-            image: 'https://example.com/images/discount.jpg'
-          },
-          {
-            id: '3',
-            title: 'Buy One Get One Free Edible',
-            description: 'Buy any edible and get one of equal or lesser value free.',
-            pointsCost: 200,
-            image: 'https://example.com/images/edibles.jpg'
-          },
-          {
-            id: '4',
-            title: 'VIP Access to New Strains',
-            description: 'Get early access to try new strains before they hit the shelves.',
-            pointsCost: 300,
-            image: 'https://example.com/images/vip.jpg'
-          }
-        ]);
+        // Get available rewards from repository
+        const availableRewards = await UserRepository.getAvailableRewards(userId);
+        setRewards(availableRewards || []);
         
-        Logger.info(LogCategory.GENERAL, 'Loaded points data');
-      }, LogCategory.GENERAL, 'loading points data', false);
+        // Get user's current points
+        const userProfile = await UserRepository.getUserProfile(userId);
+        if (userProfile && userProfile.points !== undefined) {
+          setPoints(userProfile.points);
+        }
+        
+        Logger.info(LogCategory.USER, 'Loaded points data', { 
+          historyCount: history?.length || 0,
+          rewardsCount: availableRewards?.length || 0,
+          currentPoints: userProfile?.points || 0
+        });
+      });
     } catch (error) {
-      // Error already logged by tryCatch
+      Logger.error(LogCategory.USER, 'Error loading points data', { error });
+      Alert.alert('Error', 'Failed to load points data. Please try again.');
     } finally {
       setIsLoading(false);
     }

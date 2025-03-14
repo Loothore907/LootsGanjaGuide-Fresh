@@ -23,6 +23,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import redemptionService from '../../services/RedemptionService';
 import serviceProvider from '../../services/ServiceProvider';
 import vendorCacheService from '../../services/VendorCacheService';
+import { dealCacheService } from '../../services/DealCacheService';
 
 const { width } = Dimensions.get('window');
 
@@ -30,6 +31,8 @@ const Dashboard = ({ navigation }) => {
   const { state, dispatch } = useAppState();
   const [refreshing, setRefreshing] = useState(false);
   const [recentVendors, setRecentVendors] = useState([]);
+  const [partnerVendors, setPartnerVendors] = useState([]);
+  const [currentPartnerIndex, setCurrentPartnerIndex] = useState(0);
   const [activeJourney, setActiveJourney] = useState(null);
   const [metrics, setMetrics] = useState({
     today: { count: 0, uniqueVendors: 0 },
@@ -42,13 +45,34 @@ const Dashboard = ({ navigation }) => {
   const [birthdayAvailable, setBirthdayAvailable] = useState(false);
   const [dailyAvailable, setDailyAvailable] = useState(false);
   const [specialAvailable, setSpecialAvailable] = useState(false);
+  const [everydayAvailable, setEverydayAvailable] = useState(false);
   const [error, setError] = useState(null);
+  
+  // Deal count state variables
+  const [birthdayDealCount, setBirthdayDealCount] = useState(0);
+  const [dailyDealCount, setDailyDealCount] = useState(0);
+  const [specialDealCount, setSpecialDealCount] = useState(0);
+  const [everydayDealCount, setEverydayDealCount] = useState(0);
+  const [featuredVendor, setFeaturedVendor] = useState(null);
   
   // Load data on component mount
   useEffect(() => {
     loadData();
     checkForActiveJourney();
+    loadRecentVendors();
+    
+    // Check if deal cache is loaded
+    console.log('Deal cache loaded:', dealCacheService.isCacheLoaded());
+    console.log('Deal cache service:', dealCacheService);
   }, []);
+  
+  // Add debug logs for deal counts
+  useEffect(() => {
+    console.log('Birthday Deal Count:', birthdayDealCount);
+    console.log('Daily Deal Count:', dailyDealCount);
+    console.log('Special Deal Count:', specialDealCount);
+    console.log('Everyday Deal Count:', everydayDealCount);
+  }, [birthdayDealCount, dailyDealCount, specialDealCount, everydayDealCount]);
   
   // Load metrics in useEffect
   useEffect(() => {
@@ -103,7 +127,27 @@ const Dashboard = ({ navigation }) => {
     // This useEffect can be used for other journey-related tasks if needed
   }, []);
   
-  // Load all dashboard data
+  // Load recent vendors
+  const loadRecentVendors = async () => {
+    try {
+      // Get today's redemption stats from redemptionService
+      const todayStats = await redemptionService.getRedemptionStats();
+      
+      // Get recent vendors with actual visit data
+      const recentVisits = await serviceProvider.getRecentVendors(5);
+      setRecentVendors(recentVisits);
+      
+      Logger.info(LogCategory.DASHBOARD, 'Loaded recent vendors', {
+        visitCount: todayStats.today.uniqueVendors,
+        redemptionCount: todayStats.today.count,
+        recentVendors: recentVisits.length
+      });
+    } catch (error) {
+      Logger.error(LogCategory.DASHBOARD, 'Error loading recent vendors', { error });
+    }
+  };
+  
+  // Modified loadData function to handle partner vendors
   const loadData = async () => {
     setIsLoading(true);
     
@@ -119,6 +163,13 @@ const Dashboard = ({ navigation }) => {
           // Get redemption stats directly from redemptionService instead of serviceProvider
           const stats = await redemptionService.getRedemptionStats();
           setMetrics(stats);
+          
+          Logger.info(LogCategory.DASHBOARD, 'Loaded redemption metrics', {
+            todayCount: stats.today.count,
+            todayVendors: stats.today.uniqueVendors,
+            totalCount: stats.total.count,
+            totalVendors: stats.total.uniqueVendors
+          });
         } catch (statsError) {
           Logger.error(LogCategory.DASHBOARD, 'Error fetching metrics', { error: statsError });
           // Use default metrics if error
@@ -128,54 +179,87 @@ const Dashboard = ({ navigation }) => {
           });
         }
         
-        // Count available deals
+        // Count available deals using dealCacheService instead of vendor objects
         let birthdayDeals = 0;
         let dailyDeals = 0;
         let specialDeals = 0;
+        let everydayDeals = 0;
+        let totalDeals = 0;
         
         try {
-          // Count birthday deals from vendors with birthday deals
-          birthdayDeals = vendorsData.filter(vendor => 
-            vendor.deals && 
-            vendor.deals.birthday && 
-            vendor.status === "Active-Operating"
-          ).length;
-          
-          // Count daily deals from vendors with daily deals for today
-          const today = getCurrentDayOfWeek();
-          dailyDeals = vendorsData.filter(vendor => 
-            vendor.deals && 
-            vendor.deals.daily && 
-            vendor.deals.daily[today] && 
-            vendor.deals.daily[today].length > 0 &&
-            vendor.status === "Active-Operating"
-          ).length;
-          
-          // Count special deals from vendors with active special deals
-          const now = new Date();
-          specialDeals = vendorsData.filter(vendor => {
-            if (!vendor.deals?.special || !Array.isArray(vendor.deals.special) || vendor.status !== "Active-Operating") {
-              return false;
-            }
-            return vendor.deals.special.some(deal => {
-              if (!deal.startDate || !deal.endDate) return true;
-              const startDate = new Date(deal.startDate);
-              const endDate = new Date(deal.endDate);
-              return now >= startDate && now <= endDate;
+          // Check if deal cache is loaded
+          if (dealCacheService.isCacheLoaded()) {
+            console.log('Deal cache is loaded, getting deals by type');
+            
+            // Get deals by type - use 'type' property for filtering
+            const birthdayDealsList = dealCacheService.getAllDeals({ type: 'birthday' });
+            const today = getCurrentDayOfWeek();
+            const dailyDealsList = dealCacheService.getAllDeals({ type: 'daily', day: today });
+            const specialDealsList = dealCacheService.getAllDeals({ type: 'special' });
+            const everydayDealsList = dealCacheService.getAllDeals({ type: 'everyday' });
+            
+            // Log the counts for debugging
+            console.log('Deal counts from cache:', {
+              birthday: birthdayDealsList.length,
+              daily: dailyDealsList.length,
+              special: specialDealsList.length,
+              everyday: everydayDealsList.length
             });
-          }).length;
-          
-          Logger.info(LogCategory.DEALS, 'Deal availability checked', {
-            birthdayCount: birthdayDeals,
-            dailyCount: dailyDeals,
-            specialCount: specialDeals
-          });
-        } catch (countError) {
-          Logger.error(LogCategory.DEALS, 'Error counting available deals', { error: countError });
-          // Set defaults if counting fails
-          birthdayDeals = 0;
-          dailyDeals = 0;
-          specialDeals = 0;
+            
+            // Set the counts
+            birthdayDeals = birthdayDealsList.length;
+            dailyDeals = dailyDealsList.length;
+            specialDeals = specialDealsList.length;
+            everydayDeals = everydayDealsList.length;
+            totalDeals = birthdayDeals + dailyDeals + specialDeals + everydayDeals;
+            
+            // Set deal counts for display in cards
+            console.log('Setting birthday deal count:', birthdayDeals);
+            console.log('Setting daily deal count:', dailyDeals);
+            console.log('Setting special deal count:', specialDeals);
+            console.log('Setting everyday deal count:', everydayDeals);
+            
+            setBirthdayDealCount(birthdayDeals);
+            setDailyDealCount(dailyDeals); // Only daily deals for this card
+            setSpecialDealCount(specialDeals);
+            setEverydayDealCount(everydayDeals); // Separate count for everyday deals
+            
+            // Log the counts to verify they're being set correctly
+            Logger.info(LogCategory.DASHBOARD, 'Setting deal counts for display', {
+              birthdayDealCount: birthdayDeals,
+              dailyDealCount: dailyDeals,
+              specialDealCount: specialDeals,
+              everydayDealCount: everydayDeals
+            });
+            
+            // Do NOT update metrics with available deal counts - metrics should show redemptions
+            // Keep the redemption metrics from redemptionService
+            
+            Logger.info(LogCategory.DEALS, 'Deal availability checked', {
+              birthdayCount: birthdayDeals,
+              dailyCount: dailyDeals,
+              specialCount: specialDeals,
+              everydayCount: everydayDealsList.length,
+              totalDeals: totalDeals
+            });
+          } else {
+            console.log('Deal cache not loaded, using default counts');
+          }
+        } catch (dealError) {
+          Logger.error(LogCategory.DASHBOARD, 'Error counting deals', { error: dealError });
+        }
+        
+        // Get all vendors and filter partners
+        const partners = vendorsData.filter(vendor => vendor.isPartner);
+        setPartnerVendors(partners);
+        
+        // Set featured vendor from partners list
+        if (partners.length > 0) {
+          // Use modulo to cycle through partners
+          const index = currentPartnerIndex % partners.length;
+          setFeaturedVendor(partners[index]);
+          // Update index for next load
+          setCurrentPartnerIndex(prev => (prev + 1) % partners.length);
         }
         
         // Update state with all loaded data
@@ -184,6 +268,7 @@ const Dashboard = ({ navigation }) => {
         setBirthdayAvailable(birthdayDeals > 0);
         setDailyAvailable(dailyDeals > 0);
         setSpecialAvailable(specialDeals > 0);
+        setEverydayAvailable(everydayDeals > 0);
         
         // Store vendor data in global state for reuse
         if (vendorsData.length > 0) {
@@ -225,6 +310,9 @@ const Dashboard = ({ navigation }) => {
     } else if (dealType === 'special') {
       // Special deals go directly to special deals list
       navigation.navigate('SpecialDeals');
+    } else if (dealType === 'everyday') {
+      // Navigate to the dedicated Everyday Deals screen
+      navigation.navigate('EverydayDeals');
     }
   };
     
@@ -236,18 +324,25 @@ const Dashboard = ({ navigation }) => {
     navigation.navigate('RoutePreview');
   };
   
-  const renderDealTypeCard = ({ icon, title, description, type, color }) => (
-    <TouchableOpacity 
-      style={[styles.dealTypeCard, { borderColor: color }]}
-      onPress={() => navigateToDealType(type)}
-    >
-      <View style={[styles.iconContainer, { backgroundColor: color }]}>
-        <Icon name={icon} type="material" color="#FFFFFF" size={32} />
-      </View>
-      <Text style={styles.cardTitle}>{title}</Text>
-      <Text style={styles.cardDescription}>{description}</Text>
-    </TouchableOpacity>
-  );
+  const renderDealTypeCard = ({ icon, title, description, type, color, count }) => {
+    console.log(`Rendering ${type} card with count:`, count);
+    
+    return (
+      <TouchableOpacity 
+        style={[styles.dealTypeCard, { borderColor: color }]}
+        onPress={() => navigateToDealType(type)}
+      >
+        <View style={[styles.iconContainer, { backgroundColor: color }]}>
+          <Icon name={icon} type="material" color="#FFFFFF" size={32} />
+        </View>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.cardDescription}>{description}</Text>
+        <View style={styles.dealCountBadge}>
+          <Text style={styles.dealCountText}>{count} deals</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
   
   const renderRecentVendor = ({ item }) => (
     <TouchableOpacity 
@@ -255,16 +350,25 @@ const Dashboard = ({ navigation }) => {
       onPress={() => navigateToVendorProfile(item.id)}
     >
       <Image 
-        source={{ uri: item.logoUrl }} 
+        source={{ uri: item.logoUrl || 'https://via.placeholder.com/150' }} 
         style={styles.vendorLogo}
         resizeMode="contain"
       />
       <Text style={styles.vendorName}>{item.name}</Text>
-      <View style={styles.vendorRating}>
-        <Icon name="star" type="material" size={16} color="#FFD700" />
-        <Text style={styles.ratingText}>{item.rating.toFixed(1)}</Text>
-      </View>
+      {item.lastVisited && (
+        <Text style={styles.lastVisitedText}>
+          {formatLastVisited(item.lastVisited)}
+        </Text>
+      )}
     </TouchableOpacity>
+  );
+  
+  // Placeholder for when there are no recent vendors
+  const renderEmptyRecentVendors = () => (
+    <View style={styles.emptyRecentVendors}>
+      <Icon name="storefront" type="material" size={24} color="#BBBBBB" />
+      <Text style={styles.emptyRecentVendorsText}>Visit vendors to see them here</Text>
+    </View>
   );
   
   // Handle journey selection
@@ -307,18 +411,55 @@ const Dashboard = ({ navigation }) => {
     );
   };
   
+  // Helper function to format last visited time
+  const formatLastVisited = (timestamp) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffHours = Math.floor((now - date) / (1000 * 60 * 60));
+    
+    if (diffHours < 24) {
+      return diffHours === 0 ? 'Just now' : `${diffHours}h ago`;
+    }
+    return date.toLocaleDateString();
+  };
+  
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
       
       <View style={styles.header}>
-        <View>
+        <View style={styles.vendorCountContainer}>
+          <Icon name="store" type="material" size={18} color="#4CAF50" />
+          <Text style={styles.vendorCountText}>{vendors.length} vendors</Text>
+        </View>
+        
+        <View style={styles.welcomeContainer}>
           <Text style={styles.welcomeText}>Welcome,</Text>
           <Text style={styles.usernameText}>{state.user.username || 'Cannasseur'}</Text>
         </View>
+        
         <View style={styles.pointsContainer}>
           <Icon name="loyalty" type="material" size={22} color="#4CAF50" />
           <Text style={styles.pointsText}>{state.user.points || 0} pts</Text>
+        </View>
+      </View>
+      
+      {/* Activity Metrics Banner - showing redemption counts */}
+      <View style={styles.activityBanner}>
+        <View style={styles.activityBannerLeft}>
+          <Icon name="history" type="material" size={18} color="#4CAF50" />
+          <Text style={styles.activityBannerTitle}>Today's Activity</Text>
+        </View>
+        <View style={styles.activityBannerRight}>
+          <View style={styles.activityMetric}>
+            <Text style={styles.activityMetricValue}>{metrics.today.count}</Text>
+            <Text style={styles.activityMetricLabel}>Redeemed</Text>
+          </View>
+          <View style={styles.activityDivider} />
+          <View style={styles.activityMetric}>
+            <Text style={styles.activityMetricValue}>{metrics.today.uniqueVendors}</Text>
+            <Text style={styles.activityMetricLabel}>Visited</Text>
+          </View>
         </View>
       </View>
       
@@ -353,21 +494,6 @@ const Dashboard = ({ navigation }) => {
             <Text style={styles.loadingText}>Loading deals...</Text>
           </View>
         )}
-        
-        {/* Activity Metrics */}
-        <View style={styles.metricsContainer}>
-          <Text style={styles.metricsTitle}>Today's Activity</Text>
-          <View style={styles.metricsRow}>
-            <View style={styles.metricItem}>
-              <Text style={styles.metricValue}>{metrics.today.count}</Text>
-              <Text style={styles.metricLabel}>Deals</Text>
-            </View>
-            <View style={styles.metricItem}>
-              <Text style={styles.metricValue}>{metrics.today.uniqueVendors}</Text>
-              <Text style={styles.metricLabel}>Vendors</Text>
-            </View>
-          </View>
-        </View>
         
         {/* Active Journey Card (if any) */}
         {activeJourney && (
@@ -437,199 +563,119 @@ const Dashboard = ({ navigation }) => {
         <View style={styles.sectionContainer}>
           <Text style={styles.sectionTitle}>Find Your Deal</Text>
           <View style={styles.dealTypesContainer}>
+            {console.log('Rendering Birthday Deal Card with count:', birthdayDealCount)}
             {renderDealTypeCard({
               icon: 'cake',
               title: 'Birthday Deals',
               description: 'Special offers for your birthday month',
               type: 'birthday',
-              color: '#8E44AD'
+              color: '#8E44AD',
+              count: birthdayDealCount
             })}
             
+            {console.log('Rendering Daily Deal Card with count:', dailyDealCount)}
             {renderDealTypeCard({
-              icon: 'local-offer',
+              icon: 'today',
               title: 'Daily Deals',
-              description: 'Best deals available today',
+              description: 'Special offers for today only',
               type: 'daily',
-              color: '#2ECC71'
+              color: '#2ECC71',
+              count: dailyDealCount
             })}
             
+            {console.log('Rendering Special Deal Card with count:', specialDealCount)}
             {renderDealTypeCard({
               icon: 'event',
               title: 'Special Offers',
               description: 'Limited time promotions',
               type: 'special',
-              color: '#E74C3C'
+              color: '#E74C3C',
+              count: specialDealCount
+            })}
+            
+            {console.log('Rendering Everyday Deal Card with count:', everydayDealCount)}
+            {renderDealTypeCard({
+              icon: 'repeat',
+              title: 'Everyday Deals',
+              description: 'Available any day of the week',
+              type: 'everyday',
+              color: '#3498DB',
+              count: everydayDealCount
             })}
           </View>
         </View>
         
-        {/* Featured Deals Section */}
-        {/* <View style={styles.sectionContainer}>
-          <View style={styles.sectionTitleRow}>
-            <Text style={styles.sectionTitle}>Featured Deals</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('AllDeals')}>
-              <Text style={styles.seeAllText}>See All</Text>
-            </TouchableOpacity>
-          </View>
-          
-          <FlatList
-            data={featuredDeals}
-            renderItem={renderFeaturedDeal}
-            keyExtractor={(item) => item.id.toString()}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.featuredDealsContainer}
-            ListEmptyComponent={
-              <Text style={styles.emptyListText}>No featured deals available</Text>
-            }
-          />
-        </View> */}
-        
-        {/* Recent Vendors Section */}
+        {/* Recently Visited Vendors */}
         <View style={styles.sectionContainer}>
-          <View style={styles.sectionTitleRow}>
+          <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Recently Visited</Text>
-            <TouchableOpacity onPress={() => navigation.navigate('AllVendors')}>
+            <TouchableOpacity onPress={() => navigation.navigate('VendorList')}>
               <Text style={styles.seeAllText}>See All</Text>
             </TouchableOpacity>
           </View>
           
-          <FlatList
-            data={recentVendors}
-            renderItem={renderRecentVendor}
-            keyExtractor={(item) => item.id.toString()}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.recentVendorsContainer}
-            ListEmptyComponent={
-              <Text style={styles.emptyListText}>No recent visits yet</Text>
-            }
-          />
+          {recentVendors.length > 0 ? (
+            <FlatList
+              data={recentVendors}
+              renderItem={renderRecentVendor}
+              keyExtractor={item => item.id}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.recentVendorsContainer}
+            />
+          ) : (
+            renderEmptyRecentVendors()
+          )}
         </View>
         
-        <Text style={styles.sectionTitle}>Start a Journey</Text>
-        
-        {isLoading ? (
-          <ActivityIndicator size="large" color="#4CAF50" style={styles.loadingIndicator} />
-        ) : (
-          <View style={styles.journeyTypesContainer}>
-            {/* Birthday Deals Journey */}
-            <TouchableOpacity 
-              style={[
-                styles.journeyCard, 
-                !birthdayAvailable && styles.disabledJourneyCard
-              ]}
-              disabled={!birthdayAvailable}
-              onPress={() => handleSelectJourney('birthday')}
-            >
-              <View style={styles.journeyCardContent}>
-                <View style={styles.journeyIconContainer}>
-                  <Icon name="cake" type="material" size={32} color="#4CAF50" />
-                </View>
-                <View style={styles.journeyTextContainer}>
-                  <Text style={styles.journeyTitle}>Birthday Deals</Text>
-                  <Text style={styles.journeyDescription}>Create a custom route to visit multiple dispensaries with birthday specials.</Text>
-                </View>
-                <Icon name="chevron-right" type="material" size={24} color="#666" />
-              </View>
-              
-              {!birthdayAvailable && (
-                <View style={styles.unavailableOverlay}>
-                  <Text style={styles.unavailableText}>No redeemable deals available</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-            
-            {/* Daily Deals Journey */}
-            <TouchableOpacity 
-              style={[
-                styles.journeyCard, 
-                !dailyAvailable && styles.disabledJourneyCard
-              ]}
-              disabled={!dailyAvailable}
-              onPress={() => handleSelectJourney('daily')}
-            >
-              <View style={styles.journeyCardContent}>
-                <View style={styles.journeyIconContainer}>
-                  <Icon name="today" type="material" size={32} color="#4CAF50" />
-                </View>
-                <View style={styles.journeyTextContainer}>
-                  <Text style={styles.journeyTitle}>Daily Deals</Text>
-                  <Text style={styles.journeyDescription}>Check out special deals available only today.</Text>
-                </View>
-                <Icon name="chevron-right" type="material" size={24} color="#666" />
-              </View>
-              
-              {!dailyAvailable && (
-                <View style={styles.unavailableOverlay}>
-                  <Text style={styles.unavailableText}>No redeemable deals available</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-            
-            {/* Special Deals Journey */}
-            <TouchableOpacity 
-              style={[
-                styles.journeyCard, 
-                !specialAvailable && styles.disabledJourneyCard
-              ]}
-              disabled={!specialAvailable}
-              onPress={() => handleSelectJourney('special')}
-            >
-              <View style={styles.journeyCardContent}>
-                <View style={styles.journeyIconContainer}>
-                  <Icon name="stars" type="material" size={32} color="#4CAF50" />
-                </View>
-                <View style={styles.journeyTextContainer}>
-                  <Text style={styles.journeyTitle}>Special Promotions</Text>
-                  <Text style={styles.journeyDescription}>Limited-time special deals and promotions from partner dispensaries.</Text>
-                </View>
-                <Icon name="chevron-right" type="material" size={24} color="#666" />
-              </View>
-              
-              {!specialAvailable && (
-                <View style={styles.unavailableOverlay}>
-                  <Text style={styles.unavailableText}>No redeemable deals available</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-        
-        <Text style={styles.sectionTitle}>Quick Links</Text>
-        
-        <View style={styles.quickLinksContainer}>
-          <TouchableOpacity 
-            style={styles.quickLinkButton}
-            onPress={() => navigation.navigate('VendorList')}
-          >
-            <Icon name="storefront" type="material" size={24} color="#4CAF50" />
-            <Text style={styles.quickLinkText}>All Dispensaries</Text>
-          </TouchableOpacity>
+        {/* Featured Vendor */}
+        <View style={styles.sectionContainer}>
+          <Text style={styles.sectionTitle}>Featured Vendor</Text>
           
-          <TouchableOpacity 
-            style={styles.quickLinkButton}
-            onPress={() => navigation.navigate('RecentVisits')}
-          >
-            <Icon name="history" type="material" size={24} color="#4CAF50" />
-            <Text style={styles.quickLinkText}>Recent Visits</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.quickLinkButton}
-            onPress={() => navigation.navigate('UserProfile')}
-          >
-            <Icon name="account-circle" type="material" size={24} color="#4CAF50" />
-            <Text style={styles.quickLinkText}>My Profile</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.quickLinkButton}
-            onPress={() => navigation.navigate('PointsShop')}
-          >
-            <Icon name="redeem" type="material" size={24} color="#4CAF50" />
-            <Text style={styles.quickLinkText}>Points Shop</Text>
-          </TouchableOpacity>
+          {featuredVendor ? (
+            <TouchableOpacity 
+              style={styles.featuredVendorCard}
+              onPress={() => navigateToVendorProfile(featuredVendor.id)}
+            >
+              <Image 
+                source={{ uri: featuredVendor.logoUrl || 'https://via.placeholder.com/150' }} 
+                style={styles.featuredVendorLogo}
+                resizeMode="cover"
+              />
+              <View style={styles.featuredVendorOverlay}>
+                <View style={styles.featuredVendorContent}>
+                  <Text style={styles.featuredVendorName}>{featuredVendor.name}</Text>
+                  <Text style={styles.featuredVendorAddress}>
+                    {featuredVendor.location?.address || 'Address not available'}
+                  </Text>
+                  
+                  {/* Deal count badge if vendor has deals */}
+                  {dealCacheService.getDealsByVendorId(featuredVendor.id)?.length > 0 && (
+                    <View style={styles.featuredVendorDealBadge}>
+                      <Text style={styles.featuredVendorDealCount}>
+                        {dealCacheService.getDealsByVendorId(featuredVendor.id).length} deals available
+                      </Text>
+                    </View>
+                  )}
+                  
+                  <Button
+                    title="View Details"
+                    buttonStyle={styles.featuredVendorButton}
+                    titleStyle={styles.featuredVendorButtonText}
+                    icon={{
+                      name: 'arrow-forward',
+                      type: 'material',
+                      size: 16,
+                      color: 'white'
+                    }}
+                    iconRight
+                  />
+                </View>
+              </View>
+            </TouchableOpacity>
+          ) : (
+            <Text style={styles.emptyStateText}>No featured vendor available</Text>
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -648,110 +694,147 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#EEEEEE',
   },
+  welcomeContainer: {
+    alignItems: 'center',
+  },
   welcomeText: {
     fontSize: 14,
-    color: '#666666',
+    color: '#757575',
   },
   usernameText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333333',
-  },
-  pointsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F1F8E9',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  pointsText: {
-    marginLeft: 4,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-  },
-  metricsContainer: {
-    margin: 20,
-    marginBottom: 10,
-    padding: 15,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 8,
-  },
-  metricsTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 10,
-    color: '#333333',
-  },
-  metricsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  metricItem: {
-    alignItems: 'center',
-  },
-  metricValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-  },
-  metricLabel: {
-    fontSize: 14,
-    color: '#666666',
-    marginTop: 4,
-  },
-  sectionContainer: {
-    marginBottom: 24,
-  },
-  sectionTitleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    marginBottom: 12,
-  },
-  sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#333333',
   },
+  vendorCountContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 16,
+  },
+  vendorCountText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+    marginLeft: 4,
+  },
+  pointsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 16,
+  },
+  pointsText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+    marginLeft: 4,
+  },
+  activityBanner: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#F5F5F5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#EEEEEE',
+  },
+  activityBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  activityBannerTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginLeft: 8,
+    color: '#333333',
+  },
+  activityBannerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  activityMetric: {
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  activityMetricValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#4CAF50',
+  },
+  activityMetricLabel: {
+    fontSize: 12,
+    color: '#666666',
+    marginTop: 2,
+  },
+  activityDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: '#DDDDDD',
+    marginHorizontal: 8,
+  },
+  sectionContainer: {
+    marginBottom: 12,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingHorizontal: 16,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333333',
+    marginLeft: 16,
+    marginBottom: 8,
+  },
   seeAllText: {
-    color: '#2089dc',
-    fontWeight: '600',
+    color: '#2196F3',
+    fontSize: 14,
   },
   dealTypesContainer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
   },
   dealTypeCard: {
-    width: (width - 56) / 3,
+    width: (width - 48) / 2,
     borderRadius: 8,
     borderWidth: 1,
-    padding: 12,
+    padding: 8,
     alignItems: 'center',
+    marginBottom: 12,
   },
   iconContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   cardTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   cardDescription: {
-    fontSize: 12,
+    fontSize: 11,
     color: '#666666',
     textAlign: 'center',
   },
@@ -815,26 +898,25 @@ const styles = StyleSheet.create({
     color: '#666666',
   },
   recentVendorsContainer: {
-    paddingLeft: 20,
-    paddingRight: 10,
+    paddingLeft: 16,
+    paddingRight: 16,
   },
   recentVendorCard: {
-    width: 100,
-    marginRight: 10,
+    width: 80,
+    marginRight: 12,
     alignItems: 'center',
   },
   vendorLogo: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    marginBottom: 8,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: '#F5F5F5',
+    marginBottom: 4,
   },
   vendorName: {
-    fontSize: 14,
-    fontWeight: 'bold',
+    fontSize: 12,
     textAlign: 'center',
-    marginBottom: 4,
+    color: '#333333',
   },
   vendorRating: {
     flexDirection: 'row',
@@ -992,6 +1074,106 @@ const styles = StyleSheet.create({
   loadingText: {
     color: '#2196F3',
     marginTop: 10,
+  },
+  dealCountBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: '#E74C3C',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    minWidth: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  dealCountText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  featuredVendorCard: {
+    height: 180,
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginHorizontal: 16,
+    marginBottom: 16,
+  },
+  featuredVendorLogo: {
+    width: '100%',
+    height: '100%',
+  },
+  featuredVendorOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    padding: 12,
+  },
+  featuredVendorContent: {
+    width: '100%',
+  },
+  featuredVendorName: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  featuredVendorAddress: {
+    color: '#EEEEEE',
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  featuredVendorDealBadge: {
+    backgroundColor: '#4CAF50',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    marginBottom: 8,
+  },
+  featuredVendorDealCount: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  featuredVendorButton: {
+    backgroundColor: '#2196F3',
+    borderRadius: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+  },
+  featuredVendorButtonText: {
+    fontSize: 14,
+  },
+  emptyStateText: {
+    color: '#757575',
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginVertical: 20,
+  },
+  emptyRecentVendors: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 8,
+    marginHorizontal: 16,
+  },
+  emptyRecentVendorsText: {
+    fontSize: 14,
+    color: '#666666',
+    marginLeft: 8,
+  },
+  lastVisitedText: {
+    fontSize: 10,
+    color: '#666666',
+    marginTop: 2,
   },
 });
 

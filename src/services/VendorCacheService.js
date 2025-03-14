@@ -9,15 +9,35 @@ import VendorRepository from '../repositories/VendorRepository';
  */
 class VendorCacheService {
   constructor() {
-    this.allVendors = [];
-    this.isLoaded = false;
-    this.lastUpdated = null;
+    // Set repository reference first so it's available during reset
+    this.vendorRepository = VendorRepository;
+    
+    // These properties should not be reset
     this.CACHE_KEY = 'vendors_cache';
     this.CACHE_TIMESTAMP_KEY = 'vendors_cache_timestamp';
     // Cache expiration: 24 hours in milliseconds
     this.CACHE_EXPIRATION = 24 * 60 * 60 * 1000;
     // Add subscribers array
     this.subscribers = [];
+    
+    // Initialize cache and other properties
+    this.reset();
+  }
+
+  /**
+   * Reset the cache to its initial state
+   * Note: This only resets cache data, not service configuration
+   */
+  reset() {
+    this._allVendors = [];
+    this._vendorById = new Map();
+    this._vendorsByRegion = new Map();
+    this._vendorsByStatus = new Map();
+    this._isCacheLoaded = false;
+    this._lastCacheUpdate = null;
+    
+    // Do not reset the repository reference
+    // this.vendorRepository = null; // This would cause problems!
   }
 
   /**
@@ -54,141 +74,129 @@ class VendorCacheService {
   }
 
   /**
-   * Initialize the service
-   * @returns {Promise<boolean>} Whether initialization was successful
+   * Check if the cache is loaded
+   * @returns {boolean} - Whether cache is loaded
    */
-  async initialize() {
-    try {
-      Logger.info(LogCategory.VENDORS, 'Initializing vendor cache service');
-      
-      // Try to load from AsyncStorage first
-      const cachedVendors = await this.loadFromStorage();
-      
-      if (cachedVendors.length > 0) {
-        this.allVendors = cachedVendors;
-        this.isLoaded = true;
-        
-        // If cache is older than expiration, refresh in background
-        const timestamp = await AsyncStorage.getItem(this.CACHE_TIMESTAMP_KEY);
-        const cacheAge = Date.now() - (timestamp ? parseInt(timestamp, 10) : 0);
-        
-        if (cacheAge > this.CACHE_EXPIRATION) {
-          Logger.info(LogCategory.VENDORS, 'Cache expired, refreshing in background');
-          this.refreshCache(true).catch(err => {
-            Logger.error(LogCategory.VENDORS, 'Background cache refresh failed', { error: err });
-          });
-        }
+  isCacheLoaded() {
+    return this._isCacheLoaded;
+  }
 
-        // Notify subscribers of initial load
-        this.notifySubscribers({ type: 'init', count: cachedVendors.length });
+  /**
+   * Load all vendors into cache
+   * @param {Object} options - Load options
+   * @returns {Promise<boolean>} Whether load was successful
+   */
+  async loadAllVendors(options = {}) {
+    try {
+      Logger.info(LogCategory.VENDORS, 'Loading all vendors into cache', options);
+      
+      // Try to load from AsyncStorage first if not forced
+      if (!options.force) {
+        const cachedVendors = await this.loadFromStorage();
         
-        return true;
+        if (cachedVendors.length > 0) {
+          await this.setVendorData(cachedVendors);
+          
+          // If cache is older than expiration, refresh in background
+          const timestamp = await AsyncStorage.getItem(this.CACHE_TIMESTAMP_KEY);
+          const cacheAge = Date.now() - (timestamp ? parseInt(timestamp) : 0);
+          
+          if (cacheAge > this.CACHE_EXPIRATION) {
+            Logger.info(LogCategory.VENDORS, 'Vendor cache expired, refreshing in background');
+            this.refreshCache(true);
+          }
+          
+          return true;
+        }
       }
       
-      // No valid cache, load from repository
-      return await this.refreshCache(false);
+      // No valid cache or force refresh, load from repository
+      return await this.refreshCache(options.background || false);
     } catch (error) {
-      Logger.error(LogCategory.VENDORS, 'Error initializing vendor cache', { error });
+      Logger.error(LogCategory.VENDORS, 'Error loading all vendors', { error });
       return false;
     }
   }
 
   /**
-   * Load cached vendors from AsyncStorage
-   * @returns {Promise<Array>} Array of cached vendors or empty array
+   * Initialize the vendor cache
+   * @param {Object} options - Initialization options
+   * @returns {Promise<boolean>} - Success status
+   */
+  async initialize(options = {}) {
+    // For backward compatibility, just call loadAllVendors
+    return await this.loadAllVendors(options);
+  }
+
+  /**
+   * Load vendors from persistent storage
+   * @returns {Promise<Array>} Array of vendors
    */
   async loadFromStorage() {
     try {
       const cachedData = await AsyncStorage.getItem(this.CACHE_KEY);
       
       if (cachedData) {
-        const parsedData = JSON.parse(cachedData);
-        Logger.info(LogCategory.VENDORS, `Loaded ${parsedData.length} vendors from cache`);
-        return parsedData;
+        const vendors = JSON.parse(cachedData);
+        
+        if (Array.isArray(vendors) && vendors.length > 0) {
+          Logger.info(LogCategory.VENDORS, `Loaded ${vendors.length} vendors from cache`);
+          return vendors;
+        }
       }
       
       return [];
     } catch (error) {
-      Logger.error(LogCategory.VENDORS, 'Error loading vendors from cache', { error });
+      Logger.error(LogCategory.VENDORS, 'Error loading vendors from storage', { error });
       return [];
     }
   }
 
   /**
    * Refresh the vendor cache by fetching all vendors from the repository
-   * @param {boolean} isBackground - Whether this is a background refresh 
+   * @param {boolean} isBackground - Whether this is a background refresh
    * @returns {Promise<boolean>} Whether refresh was successful
    */
   async refreshCache(isBackground = false) {
     try {
       // If not a background refresh, show that we're loading
       if (!isBackground) {
-        this.isLoaded = false;
+        this._isCacheLoaded = false;
       }
       
-      // Fetch all vendors from repository with safe options
-      // Avoid using `in` operator in filters which is causing the Firebase error
-      const options = {
-        activeRegionsOnly: true  // Use this simple filter instead of the complex ones
-      };
+      // Reset the cache
+      this.reset();
       
-      // Try-catch each step independently to avoid complete failure
-      let vendors = [];
-      try {
-        vendors = await VendorRepository.getAll(options);
-        Logger.info(LogCategory.VENDORS, `Retrieved ${vendors?.length || 0} vendors from repository`);
-      } catch (fetchError) {
-        Logger.error(LogCategory.VENDORS, 'Error fetching vendors from repository', { error: fetchError });
+      // Ensure repository is available
+      if (!this.vendorRepository) {
+        Logger.error(LogCategory.VENDORS, 'Vendor repository is not available');
+        return false;
+      }
+      
+      // Get all vendors from repository
+      const vendors = await this.vendorRepository.getAll({ ignoreDistance: true });
+      
+      if (vendors.length > 0) {
+        // Set the vendor data
+        await this.setVendorData(vendors);
         
-        // If this fails and we're in background refresh, keep existing cache
-        if (isBackground && this.allVendors.length > 0) {
-          return true;
-        }
-        
-        throw fetchError; // Re-throw to handle below
-      }
-      
-      // Validate results
-      if (!Array.isArray(vendors)) {
-        throw new Error(`Invalid vendor data returned: ${typeof vendors}`);
-      }
-      
-      if (vendors.length === 0) {
-        Logger.warn(LogCategory.VENDORS, 'Repository returned zero vendors');
-        // If this is a background refresh and we have existing cache, keep it
-        if (isBackground && this.allVendors.length > 0) {
-          return true;
-        }
-        
-        // Otherwise treat as error
-        throw new Error('No vendors returned from repository');
-      }
-      
-      // Update in-memory cache
-      this.allVendors = vendors;
-      this.isLoaded = true;
-      this.lastUpdated = new Date();
-      
-      // Try to update persistent cache
-      try {
+        // Save to AsyncStorage
         await AsyncStorage.setItem(this.CACHE_KEY, JSON.stringify(vendors));
         await AsyncStorage.setItem(this.CACHE_TIMESTAMP_KEY, Date.now().toString());
+        
         Logger.info(LogCategory.VENDORS, `Cached ${vendors.length} vendors successfully`);
-      } catch (storageError) {
-        // Log but don't fail the entire operation
-        Logger.error(LogCategory.VENDORS, 'Error saving vendors to AsyncStorage', { error: storageError });
+        
+        return true;
+      } else {
+        Logger.warn(LogCategory.VENDORS, 'No vendors returned from repository');
+        return false;
       }
-      
-      // Notify subscribers of update
-      this.notifySubscribers({ type: 'update', count: vendors.length });
-      
-      return true;
     } catch (error) {
       Logger.error(LogCategory.VENDORS, 'Error refreshing vendor cache', { error });
       
       // If this was a background refresh and we have existing data, we're still considered loaded
-      if (isBackground && this.allVendors.length > 0) {
-        this.isLoaded = true;
+      if (isBackground && this._allVendors.length > 0) {
+        this._isCacheLoaded = true;
         return true;
       }
       
@@ -197,104 +205,79 @@ class VendorCacheService {
   }
 
   /**
-   * Get all vendors from cache with safer filtering
-   * @param {Object} filterOptions - Optional in-memory filtering options
-   * @returns {Array} Array of vendors
+   * Get all vendors from cache
+   * @param {Object} options - Filter options
+   * @returns {Array} - Array of vendor objects
    */
-  getAllVendors(filterOptions = {}) {
-    if (!this.isLoaded || !Array.isArray(this.allVendors)) {
-      Logger.warn(LogCategory.VENDORS, 'Attempted to get vendors before cache was loaded');
+  getAllVendors(options = {}) {
+    if (!this._isCacheLoaded) {
+      Logger.warn(LogCategory.VENDORS, 'Vendor cache not loaded, returning empty array');
       return [];
     }
-    
-    // Apply in-memory filtering if needed
-    let filtered = [...this.allVendors];
-    
+
     try {
-      // Filter by region if specified - with null checks
-      if (filterOptions.regionId) {
-        filtered = filtered.filter(vendor => 
-          vendor && vendor.regionInfo && vendor.regionInfo.regionId === filterOptions.regionId
+      // Start with all vendors
+      let filteredVendors = [...this._allVendors];
+      
+      // Apply status filter if provided
+      if (options.status) {
+        filteredVendors = filteredVendors.filter(vendor => vendor.status === options.status);
+      }
+      
+      // Apply region filter if provided
+      if (options.region) {
+        filteredVendors = filteredVendors.filter(vendor => 
+          vendor.regions && vendor.regions.includes(options.region)
         );
       }
       
-      // Only show active region vendors if specified - with null checks
-      if (filterOptions.onlyActiveRegions) {
-        filtered = filtered.filter(vendor => 
-          vendor && vendor.regionInfo && vendor.regionInfo.inActiveRegion === true
+      // Apply partner filter if provided
+      if (options.isPartner === true) {
+        filteredVendors = filteredVendors.filter(vendor => vendor.isPartner === true);
+      }
+      
+      // Apply active regions filter if provided
+      if (options.activeRegionsOnly) {
+        filteredVendors = filteredVendors.filter(vendor => 
+          vendor.status === 'Active-Operating'
         );
       }
       
-      // Only show priority region vendors if specified - with null checks
-      if (filterOptions.onlyPriorityRegions) {
-        filtered = filtered.filter(vendor => 
-          vendor && vendor.regionInfo && vendor.regionInfo.inPriorityRegion === true
-        );
-      }
-      
-      // Filter by partner status if specified - with null checks
-      if (filterOptions.isPartner !== undefined) {
-        filtered = filtered.filter(vendor => vendor && vendor.isPartner === filterOptions.isPartner);
-      }
-      
-      // Sort by distance if user location provided - with thorough null checks
-      if (filterOptions.userLocation && 
-          typeof filterOptions.userLocation.latitude === 'number' && 
-          typeof filterOptions.userLocation.longitude === 'number') {
-        
-        filtered = filtered.map(vendor => {
-          const result = {...vendor};
-          
-          // Only calculate distance if vendor has valid coordinates
-          if (vendor && 
-              vendor.location && 
-              vendor.location.coordinates && 
-              typeof vendor.location.coordinates.latitude === 'number' && 
-              typeof vendor.location.coordinates.longitude === 'number') {
-            
-            try {
-              result.distance = VendorRepository.calculateDistance(
-                filterOptions.userLocation.latitude,
-                filterOptions.userLocation.longitude,
-                vendor.location.coordinates.latitude,
-                vendor.location.coordinates.longitude
-              );
-            } catch (distanceError) {
-              Logger.warn(LogCategory.VENDORS, 'Error calculating distance', { 
-                error: distanceError,
-                vendorId: vendor.id
-              });
-              result.distance = Infinity;
-            }
-          } else {
-            result.distance = Infinity;
-          }
-          
-          return result;
-        });
-        
-        // Sort by distance with null safety
-        filtered.sort((a, b) => {
-          const distA = typeof a.distance === 'number' ? a.distance : Infinity;
-          const distB = typeof b.distance === 'number' ? b.distance : Infinity;
-          return distA - distB;
-        });
-        
-        // Apply max distance filter if specified
-        if (typeof filterOptions.maxDistance === 'number') {
-          filtered = filtered.filter(vendor => 
-            typeof vendor.distance === 'number' && vendor.distance <= filterOptions.maxDistance
+      // Calculate distances if user location provided
+      if (options.userLocation && typeof options.userLocation === 'object') {
+        filteredVendors = filteredVendors.map(vendor => {
+          const distance = this.calculateDistance(
+            options.userLocation.latitude,
+            options.userLocation.longitude,
+            vendor.location?.coordinates?.latitude,
+            vendor.location?.coordinates?.longitude
           );
+          
+          return {
+            ...vendor,
+            distance
+          };
+        });
+        
+        // Apply distance filter if provided
+        if (options.maxDistance && !options.ignoreDistance) {
+          filteredVendors = filteredVendors.filter(vendor => 
+            vendor.distance <= options.maxDistance
+          );
+        }
+        
+        // Sort by distance if not ignoring distance
+        if (!options.ignoreDistance) {
+          filteredVendors.sort((a, b) => (a.distance || Infinity) - (b.distance || Infinity));
         }
       }
       
       // Apply limit if specified
-      if (typeof filterOptions.limit === 'number' && filterOptions.limit > 0) {
-        filtered = filtered.slice(0, filterOptions.limit);
+      if (options.limit && options.limit > 0) {
+        filteredVendors = filteredVendors.slice(0, options.limit);
       }
       
-      Logger.debug(LogCategory.VENDORS, `Filtered ${this.allVendors.length} vendors to ${filtered.length}`);
-      return filtered;
+      return filteredVendors;
     } catch (error) {
       Logger.error(LogCategory.VENDORS, 'Error filtering vendors', { error });
       return [];
@@ -302,45 +285,114 @@ class VendorCacheService {
   }
 
   /**
-   * Get a specific vendor by ID with improved error handling
+   * Get a vendor by ID
    * @param {string} id - Vendor ID
-   * @returns {Object|null} Vendor object or null if not found
+   * @returns {Object|null} - Vendor object or null if not found
    */
   getVendorById(id) {
-    if (!this.isLoaded) {
-      Logger.warn(LogCategory.VENDORS, 'Attempted to get vendor before cache was loaded');
-      return null;
-    }
-    
-    if (!id) {
-      Logger.warn(LogCategory.VENDORS, 'Invalid vendor ID provided');
+    if (!this._isCacheLoaded) {
+      Logger.warn(LogCategory.VENDORS, 'Vendor cache not loaded, returning null');
       return null;
     }
     
     try {
-      // Convert ID to string for consistent comparison
-      const vendorId = String(id);
-      
-      // Find vendor in cache with null safety
-      const vendor = this.allVendors.find(v => v && String(v.id) === vendorId);
-      
-      if (!vendor) {
-        Logger.warn(LogCategory.VENDORS, `Vendor with ID ${vendorId} not found in cache`);
-      }
-      
-      return vendor || null;
+      // Get from ID map for faster lookup
+      return this._vendorById.get(id) || null;
     } catch (error) {
-      Logger.error(LogCategory.VENDORS, `Error retrieving vendor with ID ${id}`, { error });
+      Logger.error(LogCategory.VENDORS, 'Error getting vendor by ID', { error, id });
       return null;
     }
   }
 
   /**
-   * Check if the cache is loaded
-   * @returns {boolean} Whether the cache is loaded
+   * Calculate distance between two coordinates
+   * @param {number} lat1 - Latitude of first point
+   * @param {number} lon1 - Longitude of first point
+   * @param {number} lat2 - Latitude of second point
+   * @param {number} lon2 - Longitude of second point
+   * @returns {number} - Distance in miles
    */
-  isCacheLoaded() {
-    return this.isLoaded && Array.isArray(this.allVendors) && this.allVendors.length > 0;
+  calculateDistance(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2) {
+      return Infinity;
+    }
+    
+    // Convert to radians
+    const toRad = value => value * Math.PI / 180;
+    const R = 3958.8; // Earth's radius in miles
+    
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    
+    const a = 
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * 
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distance = R * c;
+    
+    return parseFloat(distance.toFixed(2));
+  }
+
+  /**
+   * Set vendor data directly (used for loading from cache)
+   * @param {Array} vendors - Array of vendor objects
+   * @returns {Promise<boolean>} - Whether the operation was successful
+   */
+  async setVendorData(vendors) {
+    if (!Array.isArray(vendors) || vendors.length === 0) {
+      Logger.warn(LogCategory.VENDORS, 'Invalid vendor data provided to setVendorData');
+      return false;
+    }
+
+    try {
+      // Reset the cache
+      this.reset();
+      
+      // Set all vendors
+      this._allVendors = vendors;
+      
+      // Populate ID map for faster lookups
+      vendors.forEach(vendor => {
+        if (vendor.id) {
+          this._vendorById.set(vendor.id, vendor);
+        }
+        
+        // Add to region map
+        if (vendor.regions && Array.isArray(vendor.regions)) {
+          vendor.regions.forEach(region => {
+            if (!this._vendorsByRegion.has(region)) {
+              this._vendorsByRegion.set(region, []);
+            }
+            
+            this._vendorsByRegion.get(region).push(vendor);
+          });
+        }
+        
+        // Add to status map
+        if (vendor.status) {
+          if (!this._vendorsByStatus.has(vendor.status)) {
+            this._vendorsByStatus.set(vendor.status, []);
+          }
+          
+          this._vendorsByStatus.get(vendor.status).push(vendor);
+        }
+      });
+      
+      // Mark cache as loaded
+      this._isCacheLoaded = true;
+      this._lastCacheUpdate = new Date();
+      
+      // Notify subscribers
+      this.notifySubscribers({ type: 'init', count: vendors.length });
+      
+      Logger.info(LogCategory.VENDORS, `Set ${vendors.length} vendors from external data`);
+      return true;
+    } catch (error) {
+      Logger.error(LogCategory.VENDORS, 'Error setting vendor data', { error });
+      return false;
+    }
   }
 
   /**
@@ -352,9 +404,7 @@ class VendorCacheService {
   }
 }
 
-// Create singleton instance
+// Create and export singleton instance
 const vendorCacheService = new VendorCacheService();
-
-// Export as both default and named export
 export { vendorCacheService };
 export default vendorCacheService;

@@ -19,37 +19,49 @@ class RedemptionService {
   }
 
   /**
-   * Records a deal redemption
+   * Record a deal redemption
    * @param {string} vendorId - ID of the vendor
-   * @param {string} dealType - Type of deal (birthday, daily, special)
+   * @param {string} dealType - Type of deal redeemed
    * @param {string} redemptionId - Unique ID for this redemption
-   * @returns {Promise<boolean>} - Whether redemption was recorded
+   * @returns {Promise<boolean>} - Success status
    */
   async recordRedemption(vendorId, dealType, redemptionId) {
     try {
       // Get existing redemptions
       const redemptions = await this.getRedemptions();
       
-      // Add new redemption with timestamp
-      redemptions.push({
-        id: redemptionId,
+      // Create new redemption record
+      const newRedemption = {
+        id: redemptionId || `${dealType}-${vendorId}-${Date.now()}`,
         vendorId,
         dealType,
         timestamp: new Date().toISOString()
-      });
+      };
       
-      // Save back to storage
-      await AsyncStorage.setItem(this.REDEMPTION_STORAGE_KEY, JSON.stringify(redemptions));
-      
-      Logger.info(LogCategory.REDEMPTION, 'Deal redemption recorded', {
+      Logger.info(LogCategory.REDEMPTION, 'Recording new redemption', {
         vendorId,
         dealType,
-        redemptionId
+        redemptionId: newRedemption.id,
+        timestamp: newRedemption.timestamp
+      });
+      
+      // Add to list
+      redemptions.push(newRedemption);
+      
+      // Save updated list
+      await AsyncStorage.setItem(this.REDEMPTION_STORAGE_KEY, JSON.stringify(redemptions));
+      
+      Logger.debug(LogCategory.REDEMPTION, 'Redemption recorded successfully', {
+        totalRedemptions: redemptions.length
       });
       
       return true;
     } catch (error) {
-      Logger.error(LogCategory.REDEMPTION, 'Failed to record redemption', { error });
+      Logger.error(LogCategory.REDEMPTION, 'Error recording redemption', { 
+        error,
+        vendorId,
+        dealType
+      });
       return false;
     }
   }
@@ -69,15 +81,105 @@ class RedemptionService {
   }
 
   /**
-   * Check if a deal has been redeemed within its allowable period
+   * Check if a deal can be redeemed for a specific vendor
    * @param {string} vendorId - ID of the vendor
    * @param {string} dealType - Type of deal
-   * @returns {Promise<boolean>} - Whether deal is redeemable
+   * @returns {Promise<boolean>} - Whether deal can be redeemed
    */
   async canRedeemDeal(vendorId, dealType) {
     try {
       // Get all redemptions
       const redemptions = await this.getRedemptions();
+      
+      Logger.debug(LogCategory.REDEMPTION, 'Checking if deal can be redeemed', {
+        vendorId,
+        dealType,
+        totalRedemptions: redemptions.length
+      });
+      
+      // For birthday deals, check if it's been redeemed today
+      if (dealType === 'birthday') {
+        const hasRedeemedToday = await this.hasRedeemedToday(vendorId, dealType);
+        
+        Logger.debug(LogCategory.REDEMPTION, `Birthday deal ${hasRedeemedToday ? 'cannot' : 'can'} be redeemed`, {
+          vendorId,
+          reason: hasRedeemedToday ? 'already redeemed today' : 'not redeemed today'
+        });
+        
+        return !hasRedeemedToday;
+      }
+      
+      // Get applicable rule for this deal type
+      const rule = this.REDEMPTION_RULES[dealType] || this.REDEMPTION_RULES.standard;
+      const periodMilliseconds = rule.periodHours * 60 * 60 * 1000;
+      
+      // Find redemptions for this vendor and deal type
+      const vendorRedemptions = redemptions.filter(r => 
+        r.vendorId === vendorId && r.dealType === dealType
+      );
+      
+      // If no redemptions found, deal can be redeemed
+      if (vendorRedemptions.length === 0) {
+        Logger.debug(LogCategory.REDEMPTION, 'Deal can be redeemed - no previous redemptions', {
+          vendorId,
+          dealType
+        });
+        return true;
+      }
+      
+      // Get most recent redemption
+      const mostRecent = vendorRedemptions.reduce((latest, current) => {
+        const currentDate = new Date(current.timestamp);
+        const latestDate = new Date(latest.timestamp);
+        return currentDate > latestDate ? current : latest;
+      }, vendorRedemptions[0]);
+      
+      // Calculate time difference
+      const now = new Date();
+      const lastRedemptionDate = new Date(mostRecent.timestamp);
+      const timeDiff = now - lastRedemptionDate;
+      
+      // Check if enough time has passed since last redemption
+      const canRedeem = timeDiff > periodMilliseconds;
+      
+      Logger.debug(LogCategory.REDEMPTION, `Deal ${canRedeem ? 'can' : 'cannot'} be redeemed`, {
+        vendorId,
+        dealType,
+        lastRedemption: lastRedemptionDate.toISOString(),
+        hoursSince: Math.round(timeDiff / (60 * 60 * 1000)),
+        requiredHours: rule.periodHours,
+        reason: canRedeem ? 'enough time passed' : 'not enough time passed'
+      });
+      
+      return canRedeem;
+    } catch (error) {
+      Logger.error(LogCategory.REDEMPTION, 'Error checking if deal can be redeemed', { error });
+      return false; // Default to not redeemable in case of error
+    }
+  }
+
+  /**
+   * Filter vendors based on redemption rules
+   * @param {Array} vendors - List of vendors to filter
+   * @param {string} dealType - Type of deal to filter for
+   * @returns {Promise<Array>} - Filtered list of vendors
+   */
+  async filterRedeemableVendors(vendors, dealType) {
+    try {
+      if (!vendors || !Array.isArray(vendors) || vendors.length === 0) {
+        return [];
+      }
+      
+      // Get all redemptions at once to avoid multiple async calls
+      const allRedemptions = await this.getRedemptions();
+      
+      Logger.debug(LogCategory.REDEMPTION, 'Filtering vendors for redemption', {
+        totalVendors: vendors.length,
+        dealType,
+        totalRedemptions: allRedemptions.length
+      });
+      
+      const filteredVendors = [];
       
       // Get applicable rule for this deal type
       const rule = this.REDEMPTION_RULES[dealType] || this.REDEMPTION_RULES.standard;
@@ -86,80 +188,103 @@ class RedemptionService {
       // Current time
       const now = new Date();
       
-      // Find the most recent redemption for this vendor/deal combo
-      const matchingRedemptions = redemptions.filter(r => 
-        r.vendorId === vendorId && r.dealType === dealType
-      );
-      
-      if (matchingRedemptions.length === 0) {
-        return true; // No redemptions found, deal can be redeemed
+      // Process each vendor
+      for (const vendor of vendors) {
+        // First check if vendor has the deal type
+        if (!this.vendorHasDealType(vendor, dealType)) {
+          Logger.debug(LogCategory.REDEMPTION, 'Vendor excluded - does not have deal type', {
+            vendorId: vendor.id,
+            vendorName: vendor.name,
+            dealType
+          });
+          continue;
+        }
+        
+        // For birthday deals, we need to check if it's been redeemed today
+        if (dealType === 'birthday') {
+          const hasRedeemedToday = await this.hasRedeemedToday(vendor.id, dealType);
+          if (hasRedeemedToday) {
+            Logger.debug(LogCategory.REDEMPTION, 'Vendor excluded - birthday deal already redeemed today', {
+              vendorId: vendor.id,
+              vendorName: vendor.name
+            });
+            continue;
+          }
+          
+          // Birthday deal not redeemed today, include vendor
+          Logger.debug(LogCategory.REDEMPTION, 'Vendor included - birthday deal not redeemed today', {
+            vendorId: vendor.id,
+            vendorName: vendor.name
+          });
+          filteredVendors.push(vendor);
+          continue;
+        }
+        
+        // For other deal types, check redemption history
+        // Find the most recent redemption for this vendor/deal combo
+        const matchingRedemptions = allRedemptions.filter(r => 
+          r.vendorId === vendor.id && r.dealType === dealType
+        );
+        
+        if (matchingRedemptions.length === 0) {
+          // No redemptions found, deal can be redeemed
+          Logger.debug(LogCategory.REDEMPTION, 'Vendor included - no previous redemptions', {
+            vendorId: vendor.id,
+            vendorName: vendor.name,
+            dealType
+          });
+          filteredVendors.push(vendor);
+          continue;
+        }
+        
+        // Get most recent redemption
+        const mostRecent = matchingRedemptions.reduce((latest, current) => {
+          const currentDate = new Date(current.timestamp);
+          const latestDate = new Date(latest.timestamp);
+          return currentDate > latestDate ? current : latest;
+        }, matchingRedemptions[0]);
+        
+        // Calculate time difference
+        const lastRedemptionDate = new Date(mostRecent.timestamp);
+        const timeDiff = now - lastRedemptionDate;
+        
+        // Check if enough time has passed since last redemption
+        const canRedeem = timeDiff > periodMilliseconds;
+        
+        if (canRedeem) {
+          Logger.debug(LogCategory.REDEMPTION, 'Vendor included - enough time passed since last redemption', {
+            vendorId: vendor.id,
+            vendorName: vendor.name,
+            dealType,
+            lastRedemption: lastRedemptionDate.toISOString(),
+            hoursSince: Math.round(timeDiff / (60 * 60 * 1000)),
+            requiredHours: rule.periodHours
+          });
+          filteredVendors.push(vendor);
+        } else {
+          Logger.debug(LogCategory.REDEMPTION, 'Vendor excluded - not enough time since last redemption', {
+            vendorId: vendor.id,
+            vendorName: vendor.name,
+            dealType,
+            lastRedemption: lastRedemptionDate.toISOString(),
+            hoursSince: Math.round(timeDiff / (60 * 60 * 1000)),
+            requiredHours: rule.periodHours
+          });
+        }
       }
       
-      // Get most recent redemption
-      const mostRecent = matchingRedemptions.reduce((latest, current) => {
-        const currentDate = new Date(current.timestamp);
-        const latestDate = new Date(latest.timestamp);
-        return currentDate > latestDate ? current : latest;
-      }, matchingRedemptions[0]);
+      Logger.info(LogCategory.REDEMPTION, 'Vendor filtering complete', {
+        totalVendors: vendors.length,
+        includedVendors: filteredVendors.length,
+        rejectedVendors: vendors.length - filteredVendors.length,
+        dealType
+      });
       
-      // Calculate time difference
-      const lastRedemptionDate = new Date(mostRecent.timestamp);
-      const timeDiff = now - lastRedemptionDate;
-      
-      // Check if enough time has passed since last redemption
-      const canRedeem = timeDiff > periodMilliseconds;
-
-      if (!canRedeem) {
-        const hoursLeft = Math.ceil((periodMilliseconds - timeDiff) / (60 * 60 * 1000));
-        Logger.info(LogCategory.REDEMPTION, 'Deal redemption blocked due to recent use', {
-          vendorId,
-          dealType,
-          lastRedemption: lastRedemptionDate,
-          hoursRemaining: hoursLeft
-        });
-      }
-
-      return canRedeem;
+      return filteredVendors;
     } catch (error) {
-      Logger.error(LogCategory.REDEMPTION, 'Error checking redemption eligibility', { error });
-      return true; // On error, default to allowing redemption
+      Logger.error(LogCategory.REDEMPTION, 'Error filtering redeemable vendors', { error });
+      return vendors; // Return original list in case of error
     }
-  }
-
-  /**
-   * Filter a list of vendors to only include those with redeemable deals
-   * @param {Array} vendors - List of vendor objects
-   * @param {string} dealType - Type of deal being searched for
-   * @returns {Promise<Array>} - Filtered vendors list
-   */
-  async filterRedeemableVendors(vendors, dealType) {
-    if (!vendors || vendors.length === 0) {
-      return [];
-    }
-    
-    const filteredVendors = [];
-    
-    for (const vendor of vendors) {
-      // Skip if vendor doesn't have applicable deal
-      if (!this.vendorHasDealType(vendor, dealType)) {
-        continue;
-      }
-
-      // Check if deal is redeemable
-      const canRedeem = await this.canRedeemDeal(vendor.id, dealType);
-      
-      if (canRedeem) {
-        filteredVendors.push(vendor);
-      } else {
-        Logger.info(LogCategory.JOURNEY, 'Vendor filtered due to recent redemption', {
-          vendorId: vendor.id,
-          vendorName: vendor.name,
-          dealType
-        });
-      }
-    }
-    
-    return filteredVendors;
   }
 
   /**
@@ -169,7 +294,16 @@ class RedemptionService {
    * @returns {boolean} - Whether vendor has the deal
    */
   vendorHasDealType(vendor, dealType) {
-    if (!vendor || !vendor.deals) return false;
+    if (!vendor) return false;
+    
+    // Vendors from proximity query are guaranteed to have the deal type
+    // since we queried for vendors with that specific deal type
+    if (vendor.distance !== undefined || vendor.dealType === dealType) {
+      return true;
+    }
+    
+    // For vendors from other sources, check the deals property
+    if (!vendor.deals) return false;
     
     switch (dealType) {
       case 'birthday':
@@ -181,6 +315,18 @@ class RedemptionService {
         return vendor.deals.daily && 
                Array.isArray(vendor.deals.daily[currentDay]) && 
                vendor.deals.daily[currentDay].length > 0;
+      case 'multi_day':
+        // Current day of week
+        const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        const today = days[new Date().getDay()];
+        // Check if any multi-day deals have today as an active day
+        return vendor.deals.multi_day && 
+               Array.isArray(vendor.deals.multi_day) && 
+               vendor.deals.multi_day.some(deal => 
+                 deal.activeDays && 
+                 Array.isArray(deal.activeDays) && 
+                 deal.activeDays.includes(today)
+               );
       case 'special':
         // Check if there are any active special deals
         const now = new Date();
@@ -191,6 +337,8 @@ class RedemptionService {
           return now >= startDate && now <= endDate;
         }) || [];
         return activeSpecials.length > 0;
+      case 'everyday':
+        return vendor.deals.everyday && vendor.deals.everyday.length > 0;
       default:
         return false;
     }
@@ -284,7 +432,7 @@ class RedemptionService {
   }
 
   /**
-   * Check if a deal has been redeemed today
+   * Check if a deal has been redeemed today for a specific vendor
    * @param {string} vendorId - ID of the vendor
    * @param {string} dealType - Type of deal
    * @returns {Promise<boolean>} - Whether deal was redeemed today
@@ -299,15 +447,41 @@ class RedemptionService {
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
       const todayEnd = todayStart + 24 * 60 * 60 * 1000;
       
+      Logger.debug(LogCategory.REDEMPTION, 'Checking for today\'s redemptions', { 
+        vendorId, 
+        dealType,
+        totalRedemptions: redemptions.length,
+        todayStart: new Date(todayStart).toISOString(),
+        todayEnd: new Date(todayEnd).toISOString()
+      });
+      
       // Find any redemptions for this vendor and deal type today
       const todayRedemptions = redemptions.filter(r => {
         if (r.vendorId !== vendorId || r.dealType !== dealType) return false;
         
         const timestamp = new Date(r.timestamp).getTime();
-        return timestamp >= todayStart && timestamp < todayEnd;
+        const isToday = timestamp >= todayStart && timestamp < todayEnd;
+        
+        if (isToday) {
+          Logger.debug(LogCategory.REDEMPTION, 'Found redemption from today', {
+            vendorId,
+            dealType,
+            redemptionTime: new Date(timestamp).toISOString()
+          });
+        }
+        
+        return isToday;
       });
       
-      return todayRedemptions.length > 0;
+      const hasRedeemed = todayRedemptions.length > 0;
+      
+      Logger.debug(LogCategory.REDEMPTION, `Deal ${hasRedeemed ? 'has' : 'has not'} been redeemed today`, {
+        vendorId,
+        dealType,
+        redemptionsToday: todayRedemptions.length
+      });
+      
+      return hasRedeemed;
     } catch (error) {
       Logger.error(LogCategory.REDEMPTION, 'Error checking for today\'s redemptions', { error });
       return false; // Default to not redeemed in case of error

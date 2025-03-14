@@ -23,6 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
 import redemptionService from '../../services/RedemptionService';
+import { DealRepository, VendorRepository } from '../../repositories/repositoryExports';
 
 /**
  * Deal Details Screen
@@ -58,16 +59,25 @@ const DealDetails = ({ route, navigation }) => {
     
     try {
       await tryCatch(async () => {
-        // In a real app, fetch deal data from API
-        // For now, use mock data from params or generate it
-        
-        // If we have complete deal data from navigation params
+        // If we have complete deal data from navigation params, use it
         if (route.params?.deal) {
           setDeal(route.params.deal);
+        } else if (dealId) {
+          // Otherwise, fetch the deal from the repository
+          const dealData = await DealRepository.getById(dealId);
+          
+          if (!dealData) {
+            Logger.warn(LogCategory.DEALS, `Deal with ID ${dealId} not found`);
+            Alert.alert('Error', 'Deal not found');
+            navigation.goBack();
+            return;
+          }
+          
+          setDeal(dealData);
         } else {
-          // Otherwise, construct minimal deal data
+          // If no deal ID, create a minimal deal object from params
           setDeal({
-            id: dealId,
+            id: 'temp-' + Date.now(),
             title: route.params?.title || 'Deal Details',
             description: route.params?.description || 'No description available',
             discount: route.params?.discount || 'Special Offer',
@@ -75,64 +85,33 @@ const DealDetails = ({ route, navigation }) => {
             dealType: dealType || 'standard',
             vendorId: vendorId
           });
+          
+          Logger.warn(LogCategory.DEALS, 'Created temporary deal object from params');
         }
         
-        // Get vendor data
-        // In a real app, call API service
-        // For this demo, use findVendorById to get from state
-        const vendorData = findVendorById(vendorId);
-        if (vendorData) {
-          setVendor(vendorData);
-        } else {
-          Logger.warn(LogCategory.DEALS, 'Vendor not found for deal', { vendorId });
+        // Get vendor data if we have a vendor ID
+        if (vendorId) {
+          const vendorData = await VendorRepository.getById(vendorId);
+          if (vendorData) {
+            setVendor(vendorData);
+          } else {
+            Logger.warn(LogCategory.VENDORS, `Vendor with ID ${vendorId} not found`);
+          }
         }
         
-        Logger.info(LogCategory.DEALS, 'Loaded deal details', {
-          dealId,
-          vendorId,
-          dealType
+        Logger.info(LogCategory.DEALS, 'Loaded deal details', { 
+          dealId: dealId || 'from params',
+          vendorId: vendorId
         });
-      }, LogCategory.DEALS, 'loading deal details', true);
+      });
     } catch (error) {
-      // Error already logged by tryCatch
+      Logger.error(LogCategory.DEALS, 'Error loading deal details', { error });
+      Alert.alert('Error', 'Failed to load deal details. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
   
-  // Helper function to find vendor in state
-  const findVendorById = (id) => {
-    if (!id) return null;
-    
-    // Check vendors list in state
-    if (state.vendorData && state.vendorData.list) {
-      const vendor = state.vendorData.list.find(v => v.id === id);
-      if (vendor) return vendor;
-    }
-    
-    // Check journey vendors
-    if (state.journey && state.journey.vendors) {
-      const vendor = state.journey.vendors.find(v => v.id === id);
-      if (vendor) return vendor;
-    }
-    
-    // Return mock vendor data if not found
-    return {
-      id: id,
-      name: 'Unknown Vendor',
-      location: {
-        address: 'Address unavailable',
-        coordinates: {
-          latitude: 61.2175,
-          longitude: -149.8584
-        }
-      },
-      distance: 1.0,
-      isPartner: false
-    };
-  };
-  
-  // Check if deal can be redeemed today
   const checkRedemptionStatus = async () => {
     try {
       const canRedeem = await redemptionService.canRedeemDeal(vendor.id, dealType);

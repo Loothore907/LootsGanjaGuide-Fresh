@@ -25,7 +25,7 @@ const AllDeals = ({ navigation }) => {
   const dealTypes = [
     {
       title: 'Birthday Deals',
-      description: 'Special offers for your birthday month',
+      description: 'Special offers for your birthday!',
       icon: 'cake',
       route: 'BirthdayDeals',
       color: '#8E44AD'

@@ -49,7 +49,7 @@ src/
 - Created vendor profiles with comprehensive deal information
 - Implemented QR code check-in system with points rewards
 - Added user profiles with points tracking and redemption features
-- Integrated mock data services simulating backend APIs (to be replaced with real APIs)
+- Integrated with Firebase for real-time data storage and retrieval
 
 ## Monetization Strategy
 - Integrated, non-intrusive advertising

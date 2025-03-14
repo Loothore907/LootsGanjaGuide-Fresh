@@ -10,6 +10,7 @@ import serviceProvider from '../services/ServiceProvider';
 import appInitializer from '../utils/AppInitializer';
 import redemptionService from '../services/RedemptionService';
 import { hasValidFirebaseConfig } from '../config/firebase';
+import cacheTest from '../utils/CacheTest';
 
 /**
  * Developer tools component for testing and debugging
@@ -24,6 +25,10 @@ const DevTools = () => {
   const [connectionStatus, setConnectionStatus] = useState('unknown');
   const [configModalVisible, setConfigModalVisible] = useState(false);
   const [configInput, setConfigInput] = useState('');
+  const [cacheTestResults, setCacheTestResults] = useState(null);
+  const [isCacheTesting, setIsCacheTesting] = useState(false);
+  const [cachePerformanceResults, setCachePerformanceResults] = useState(null);
+  const [isPerformanceTesting, setIsPerformanceTesting] = useState(false);
   const navigation = useNavigation();
 
   // Load initial state
@@ -238,6 +243,88 @@ const DevTools = () => {
     }
   };
 
+  // Run cache system test
+  const runCacheTest = async () => {
+    setIsCacheTesting(true);
+    setCacheTestResults(null);
+    
+    try {
+      const results = await cacheTest.runFullTest();
+      setCacheTestResults(results);
+      
+      if (results.success) {
+        Alert.alert('Success', 'Cache system test completed successfully!');
+      } else {
+        Alert.alert('Warning', 'Some cache tests failed. Check the results for details.');
+      }
+    } catch (error) {
+      Logger.error(LogCategory.GENERAL, 'Error running cache test', { error });
+      Alert.alert('Error', 'Failed to run cache test: ' + error.message);
+    } finally {
+      setIsCacheTesting(false);
+    }
+  };
+
+  // Run cache performance test
+  const runPerformanceTest = async () => {
+    setIsPerformanceTesting(true);
+    setCachePerformanceResults(null);
+    
+    try {
+      const results = await cacheTest.testPerformance();
+      setCachePerformanceResults(results);
+      
+      if (results.success) {
+        Alert.alert('Success', 'Cache performance test completed successfully!');
+      } else {
+        Alert.alert('Error', 'Performance test failed: ' + (results.error || 'Unknown error'));
+      }
+    } catch (error) {
+      Logger.error(LogCategory.GENERAL, 'Error running performance test', { error });
+      Alert.alert('Error', 'Failed to run performance test: ' + error.message);
+    } finally {
+      setIsPerformanceTesting(false);
+    }
+  };
+
+  // Clear app cache
+  const clearAppCache = async () => {
+    try {
+      // Show confirmation alert
+      Alert.alert(
+        "Clear App Cache",
+        "This will clear all cached vendor and deal data. The app will need to reload data from the server. Continue?",
+        [
+          {
+            text: "Cancel",
+            style: "cancel"
+          },
+          {
+            text: "Clear Cache",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                const success = await appInitializer.clearCache();
+                
+                if (success) {
+                  Alert.alert('Success', 'Cache cleared successfully. The app will reload data on next startup.');
+                } else {
+                  Alert.alert('Error', 'Failed to clear cache. Please try again.');
+                }
+              } catch (error) {
+                Logger.error(LogCategory.GENERAL, 'Error clearing cache from DevTools', { error });
+                Alert.alert('Error', 'An error occurred while clearing the cache: ' + error.message);
+              }
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      Logger.error(LogCategory.GENERAL, 'Error in clearAppCache', { error });
+      Alert.alert('Error', 'Failed to clear cache: ' + error.message);
+    }
+  };
+
   if (!isVisible) {
     return (
       <TouchableOpacity 
@@ -302,6 +389,126 @@ const DevTools = () => {
           buttonStyle={styles.configButton}
           containerStyle={styles.buttonContainer}
         />
+      </View>
+      
+      {/* Cache Testing Section */}
+      <View style={styles.section}>
+        <Text style={styles.sectionHeader}>Cache System</Text>
+        
+        <View style={styles.buttonRow}>
+          <TouchableOpacity 
+            style={[styles.button, styles.primaryButton]} 
+            onPress={runCacheTest}
+            disabled={isCacheTesting}
+          >
+            <Text style={styles.buttonText}>
+              {isCacheTesting ? 'Testing...' : 'Run Cache Test'}
+            </Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[styles.button, styles.secondaryButton]} 
+            onPress={runPerformanceTest}
+            disabled={isPerformanceTesting}
+          >
+            <Text style={styles.buttonText}>
+              {isPerformanceTesting ? 'Testing...' : 'Test Performance'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.buttonRow}>
+          <TouchableOpacity 
+            style={[styles.button, styles.dangerButton]} 
+            onPress={clearAppCache}
+          >
+            <Text style={styles.buttonText}>Clear App Cache</Text>
+          </TouchableOpacity>
+        </View>
+        
+        {/* Cache Test Results */}
+        {cacheTestResults && (
+          <View style={styles.resultsContainer}>
+            <Text style={styles.resultsHeader}>
+              Cache Test Results: {cacheTestResults.success ? 'SUCCESS' : 'FAILED'}
+            </Text>
+            
+            {Object.entries(cacheTestResults.results).map(([key, value]) => (
+              <View key={key} style={styles.resultRow}>
+                <Text style={styles.resultLabel}>{key}:</Text>
+                <Text style={[
+                  styles.resultValue,
+                  { color: value.success ? '#4CAF50' : '#F44336' }
+                ]}>
+                  {value.success ? 'PASS' : 'FAIL'} 
+                  {value.count !== undefined ? ` (${value.count} items)` : ''}
+                  {value.time !== undefined ? ` in ${value.time}ms` : ''}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+        
+        {/* Performance Test Results */}
+        {cachePerformanceResults && cachePerformanceResults.success && (
+          <View style={styles.resultsContainer}>
+            <Text style={styles.resultsHeader}>Performance Results</Text>
+            
+            <View style={styles.resultSection}>
+              <Text style={styles.resultSectionHeader}>Vendors</Text>
+              <View style={styles.resultRow}>
+                <Text style={styles.resultLabel}>Cached:</Text>
+                <Text style={styles.resultValue}>
+                  {cachePerformanceResults.results.vendors.cached.time}ms 
+                  ({cachePerformanceResults.results.vendors.cached.count} items)
+                </Text>
+              </View>
+              <View style={styles.resultRow}>
+                <Text style={styles.resultLabel}>Uncached:</Text>
+                <Text style={styles.resultValue}>
+                  {cachePerformanceResults.results.vendors.uncached.time}ms
+                  ({cachePerformanceResults.results.vendors.uncached.count} items)
+                </Text>
+              </View>
+              <View style={styles.resultRow}>
+                <Text style={styles.resultLabel}>Speedup:</Text>
+                <Text style={[
+                  styles.resultValue,
+                  { color: '#4CAF50', fontWeight: 'bold' }
+                ]}>
+                  {cachePerformanceResults.results.vendors.speedup}x
+                </Text>
+              </View>
+            </View>
+            
+            <View style={styles.resultSection}>
+              <Text style={styles.resultSectionHeader}>Deals</Text>
+              <View style={styles.resultRow}>
+                <Text style={styles.resultLabel}>Cached:</Text>
+                <Text style={styles.resultValue}>
+                  {cachePerformanceResults.results.deals.cached.time}ms
+                  ({cachePerformanceResults.results.deals.cached.count} items)
+                </Text>
+              </View>
+              <View style={styles.resultRow}>
+                <Text style={styles.resultLabel}>Uncached:</Text>
+                <Text style={styles.resultValue}>
+                  {cachePerformanceResults.results.deals.uncached.time}ms
+                  ({cachePerformanceResults.results.deals.uncached.count} items)
+                </Text>
+              </View>
+              <View style={styles.resultRow}>
+                <Text style={styles.resultLabel}>Speedup:</Text>
+                <Text style={[
+                  styles.resultValue,
+                  { color: '#4CAF50', fontWeight: 'bold' }
+                ]}>
+                  {cachePerformanceResults.results.deals.speedup}x
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
       </View>
       
       {/* Clear All App Data */}
@@ -449,16 +656,15 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#f5f5f5',
-    zIndex: 1000,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    zIndex: 9999,
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#2196F3',
+    alignItems: 'center',
     padding: 15,
-    paddingTop: 40, // Account for status bar
+    backgroundColor: '#333',
   },
   title: {
     color: '#fff',
@@ -468,88 +674,104 @@ const styles = StyleSheet.create({
   closeButton: {
     padding: 5,
   },
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  tab: {
-    flex: 1,
-    padding: 12,
-    alignItems: 'center',
-  },
-  activeTab: {
-    borderBottomWidth: 2,
-    borderBottomColor: '#2196F3',
-  },
-  tabText: {
-    color: '#757575',
-    fontSize: 14,
-  },
-  activeTabText: {
-    color: '#2196F3',
-    fontWeight: 'bold',
-  },
   content: {
     flex: 1,
     padding: 15,
   },
   section: {
-    backgroundColor: '#fff',
-    borderRadius: 5,
+    marginBottom: 20,
+    backgroundColor: '#222',
     padding: 15,
-    marginBottom: 15,
-    elevation: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 1,
+    borderRadius: 5,
   },
   sectionHeader: {
     fontSize: 16,
     fontWeight: 'bold',
     marginBottom: 10,
-    color: '#333',
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  toggleLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  helpText: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 5,
-    marginBottom: 10,
+    color: '#fff',
   },
   buttonRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 10,
+    marginBottom: 10,
   },
   button: {
     flex: 1,
-    backgroundColor: '#2196F3',
     padding: 10,
     borderRadius: 5,
     alignItems: 'center',
-    marginHorizontal: 5,
+    justifyContent: 'center',
+    margin: 5,
   },
   buttonText: {
     color: '#fff',
     fontWeight: 'bold',
   },
-  disabledButton: {
-    backgroundColor: '#BDBDBD',
-  },
   dangerButton: {
     backgroundColor: '#F44336',
+  },
+  primaryButton: {
+    backgroundColor: '#4CAF50',
+  },
+  secondaryButton: {
+    backgroundColor: '#FF9800',
+  },
+  helpText: {
+    color: '#aaa',
+    fontSize: 12,
+    marginTop: 5,
+  },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#222',
+    borderBottomWidth: 1,
+    borderBottomColor: '#444',
+  },
+  tab: {
+    flex: 1,
+    padding: 10,
+    alignItems: 'center',
+  },
+  activeTab: {
+    borderBottomWidth: 2,
+    borderBottomColor: '#4CAF50',
+  },
+  tabText: {
+    color: '#aaa',
+  },
+  activeTabText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  statusLabel: {
+    color: '#fff',
+    fontSize: 14,
+  },
+  statusIndicator: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 5,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  statusText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  buttonContainer: {
+    marginVertical: 10,
+  },
+  testConnectionButton: {
+    backgroundColor: '#4CAF50',
+  },
+  configButton: {
+    backgroundColor: '#FF9800',
   },
   fab: {
     position: 'absolute',
@@ -561,116 +783,102 @@ const styles = StyleSheet.create({
     backgroundColor: '#F44336',
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 4,
-    zIndex: 1000,
+    elevation: 5,
+    zIndex: 9999,
   },
   fabIcon: {
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 12,
   },
-  resultContainer: {
-    marginTop: 10,
-    padding: 10,
-    backgroundColor: '#f8f8f8',
-    borderRadius: 5,
-  },
-  resultStatus: {
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  successText: {
-    color: '#4CAF50',
-  },
-  errorText: {
-    color: '#F44336',
-  },
-  warningText: {
-    color: '#FF9800',
-  },
-  progressContainer: {
-    alignItems: 'center',
-    marginTop: 10,
-    padding: 10,
-  },
-  progressText: {
-    marginTop: 10,
-    fontSize: 14,
-    color: '#2196F3',
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  statusLabel: {
-    fontSize: 14,
-    color: '#666666',
-  },
-  statusIndicator: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  statusText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 12,
-  },
-  testConnectionButton: {
-    backgroundColor: '#4CAF50',
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  buttonContainer: {
-    marginTop: 10,
-    marginBottom: 10,
-  },
   modalContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
   },
   modalContent: {
-    backgroundColor: 'white',
-    padding: 20,
+    width: '90%',
+    backgroundColor: '#333',
     borderRadius: 10,
-    width: '80%',
-    maxHeight: '80%',
+    padding: 20,
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
+    color: '#fff',
     marginBottom: 10,
   },
   modalSubtitle: {
     fontSize: 14,
-    color: '#666',
-    marginBottom: 10,
+    color: '#ccc',
+    marginBottom: 15,
   },
   configInput: {
-    borderWidth: 1,
-    borderColor: '#ccc',
+    backgroundColor: '#222',
+    color: '#fff',
     padding: 10,
     borderRadius: 5,
-    marginBottom: 10,
+    height: 150,
+    textAlignVertical: 'top',
+    marginBottom: 15,
   },
   modalButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
   cancelButton: {
-    backgroundColor: '#F44336',
+    backgroundColor: '#666',
   },
   confirmButton: {
     backgroundColor: '#4CAF50',
   },
-  configButton: {
-    backgroundColor: '#FF9800',
-    marginTop: 8,
+  resultsContainer: {
+    marginTop: 10,
+    padding: 10,
+    backgroundColor: '#333',
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: '#444',
+  },
+  resultsHeader: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: '#fff',
+  },
+  resultRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 5,
+    paddingVertical: 3,
+    borderBottomWidth: 1,
+    borderBottomColor: '#444',
+  },
+  resultLabel: {
+    fontSize: 14,
+    color: '#ccc',
+  },
+  resultValue: {
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '500',
+  },
+  resultSection: {
+    marginBottom: 15,
+    padding: 10,
+    backgroundColor: '#222',
+    borderRadius: 5,
+  },
+  resultSectionHeader: {
+    fontSize: 15,
+    fontWeight: 'bold',
     marginBottom: 8,
+    color: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#444',
+    paddingBottom: 5,
   },
 });
 

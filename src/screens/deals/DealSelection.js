@@ -31,7 +31,7 @@ const DealSelection = ({ navigation, route }) => {
   
   // State variables
   const [numVendors, setNumVendors] = useState(3);
-  const [maxDistance, setMaxDistance] = useState(10); // Default starting value is now 10
+  const [maxDistance, setMaxDistance] = useState(10000); // Default starting value is now 10
   const [isLoading, setIsLoading] = useState(false);
   const [locationStatus, setLocationStatus] = useState('unknown');
   const [recentRedemptions, setRecentRedemptions] = useState([]);
@@ -119,7 +119,7 @@ const DealSelection = ({ navigation, route }) => {
       if (routeResult.vendors.length === 0) {
         Alert.alert(
           'No Vendors Found',
-          'We couldn\'t find any vendors with the selected deal type. Please try increasing your search distance.',
+          'We couldn\'t find any vendors with the selected deal type. You may have already redeemed all available deals today. Try again tomorrow or choose a different deal type.',
           [{ text: 'OK' }]
         );
         setIsLoading(false);
@@ -219,10 +219,16 @@ const DealSelection = ({ navigation, route }) => {
           />
           <View style={styles.sliderLabels}>
             <Text>1</Text>
+            <Text>2</Text>
             <Text>3</Text>
+            <Text>4</Text>
             <Text>5</Text>
+            <Text>6</Text>
+            <Text>7</Text>
             <Text>8</Text>
             <Text>10</Text>
+
+
           </View>
         </View>
         
@@ -232,9 +238,9 @@ const DealSelection = ({ navigation, route }) => {
           <Slider
             value={maxDistance}
             onValueChange={value => setMaxDistance(value)}
-            minimumValue={10}
-            maximumValue={100}
-            step={25}
+            minimumValue={2500}
+            maximumValue={10000}
+            step={250}
             thumbStyle={styles.thumbStyle}
             thumbProps={{
               children: (

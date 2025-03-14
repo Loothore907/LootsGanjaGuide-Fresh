@@ -1,0 +1,12 @@
+{
+  "name": "lootsganja-scripts",
+  "version": "1.0.0",
+  "description": "Utility scripts for Loot's Ganja Guide",
+  "private": true,
+  "scripts": {
+    "create-deals": "node createSampleDeals.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^11.10.1"
+  }
+} 

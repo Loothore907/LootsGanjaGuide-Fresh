@@ -54,9 +54,20 @@ const JourneyComplete = ({ navigation, route }) => {
   
   // Calculate journey statistics using journeyData
   const journeyType = journeyData?.journeyType || state.journey.dealType || 'daily';
+  
+  // Check if we have explicitly set allCheckedIn flag in journey data
+  const allVendorsCheckedIn = journeyData?.allCheckedIn || false;
+  
+  // Use vendors from journey data, ensuring the last vendor is marked as checked in if allCheckedIn is true
   const vendorsVisited = journeyData?.vendors ? 
-    journeyData.vendors.slice(0, journeyData.currentVendorIndex + 1) : 
+    (allVendorsCheckedIn ? 
+      // If allCheckedIn is true, ensure all vendors show as checked in
+      journeyData.vendors.map(vendor => ({...vendor, checkedIn: true})) :
+      // Otherwise use the data as is
+      journeyData.vendors
+    ) : 
     (state.journey.vendors ? state.journey.vendors.slice(0, state.journey.currentVendorIndex + 1) : []);
+  
   const totalVendors = journeyData?.totalVendors || state.journey.totalVendors || 0;
   const totalDistance = journeyData?.totalDistance || state.route.totalDistance || 0;
   
@@ -190,149 +201,197 @@ const JourneyComplete = ({ navigation, route }) => {
     navigation.goBack();
   };
   
+  // Determine if this is a single vendor journey
+  const isSingleVendorJourney = totalVendors === 1 || vendorsVisited.length === 1;
+  
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {journeyData ? (
           <>
+            {/* Enlarged Header Section */}
             <View style={styles.headerSection}>
               {isSuccess ? (
                 <>
-                  <View style={styles.confettiContainer}>
+                  <View style={styles.iconTextRow}>
                     <Icon name="celebration" type="material" size={80} color="#FFD700" />
+                    <View style={styles.headerTextContainer}>
+                      <Text style={styles.congrats}>Congratulations!</Text>
+                      <Text style={styles.journeyComplete}>Journey Complete</Text>
+                      <Text style={styles.journeyType}>{journeyType === 'birthday' ? 'Birthday Deals' : journeyType === 'special' ? 'Special Deals' : 'Daily Deals'}</Text>
+                    </View>
                   </View>
-                  <Text style={styles.congrats}>Congratulations!</Text>
-                  <Text style={styles.journeyComplete}>Journey Complete</Text>
                 </>
               ) : (
                 <>
-                  <View style={styles.confettiContainer}>
+                  <View style={styles.iconTextRow}>
                     <Icon name="sentiment-dissatisfied" type="material" size={80} color="#7E7E7E" />
+                    <View style={styles.headerTextContainer}>
+                      <Text style={styles.terminatedText}>Journey Terminated</Text>
+                      <Text style={styles.terminatedSubText}>You've ended your journey early</Text>
+                      <Text style={styles.journeyType}>{journeyType === 'birthday' ? 'Birthday Deals' : journeyType === 'special' ? 'Special Deals' : 'Daily Deals'}</Text>
+                    </View>
                   </View>
-                  <Text style={styles.terminatedText}>Journey Terminated</Text>
-                  <Text style={styles.terminatedSubText}>You've ended your journey early</Text>
                 </>
               )}
-              <Text style={styles.journeyType}>{journeyType === 'birthday' ? 'Birthday Deals' : 'Daily Deals'}</Text>
             </View>
             
+            {/* Compact Stats Card */}
             <Card containerStyle={styles.statsCard}>
-              <Card.Title>Journey Statistics</Card.Title>
-              <Card.Divider />
-              <View style={styles.statsContainer}>
+              <View style={styles.statsGrid}>
                 <View style={styles.statItem}>
-                  <Icon name="place" type="material" color="#4CAF50" size={24} />
-                  <Text style={styles.statValue}>{vendorsVisited.filter(v => v.checkedIn).length}/{vendorsVisited.length}</Text>
+                  <View style={styles.statRow}>
+                    <Icon name="place" type="material" color="#4CAF50" size={28} />
+                    <Text style={styles.statValue}>
+                      {allVendorsCheckedIn ? 
+                        `${vendorsVisited.length}/${vendorsVisited.length}` : 
+                        `${vendorsVisited.filter(v => v.checkedIn).length}/${vendorsVisited.length}`}
+                    </Text>
+                  </View>
                   <Text style={styles.statLabel}>Vendors Visited</Text>
                 </View>
                 
                 <View style={styles.statItem}>
-                  <Icon name="route" type="material" color="#2196F3" size={24} />
-                  <Text style={styles.statValue}>{totalDistance.toFixed(1)}</Text>
+                  <View style={styles.statRow}>
+                    <Icon name="route" type="material" color="#2196F3" size={28} />
+                    <Text style={styles.statValue}>{totalDistance.toFixed(1)}</Text>
+                  </View>
                   <Text style={styles.statLabel}>Miles Traveled</Text>
                 </View>
                 
                 <View style={styles.statItem}>
-                  <Icon name="loyalty" type="material" color="#E91E63" size={24} />
-                  <Text style={styles.statValue}>+{pointsInfo.totalPoints}</Text>
+                  <View style={styles.statRow}>
+                    <Icon name="loyalty" type="material" color="#E91E63" size={28} />
+                    <Text style={styles.statValue}>+{pointsInfo.totalPoints}</Text>
+                  </View>
                   <Text style={styles.statLabel}>Points Earned</Text>
                 </View>
+                
+                {estimatedSavings > 0 && (
+                  <View style={styles.statItem}>
+                    <View style={styles.statRow}>
+                      <Icon name="savings" type="material" color="#4CAF50" size={28} />
+                      <Text style={styles.statValue}>${estimatedSavings.toFixed(0)}</Text>
+                    </View>
+                    <Text style={styles.statLabel}>Est. Savings</Text>
+                  </View>
+                )}
               </View>
               
-              {/* Only show savings if implemented or if using dummy value */}
-              {estimatedSavings > 0 && (
+              {/* Show points breakdown in a more compact format */}
+              {(pointsInfo.bonusPoints > 0 || noBonusReason) && (
                 <>
-                  <Card.Divider style={styles.divider} />
-                  <View style={styles.savingsContainer}>
-                    <Icon name="savings" type="material" color="#4CAF50" size={24} />
-                    <Text style={styles.savingsAmount}>${estimatedSavings.toFixed(2)}</Text>
-                    <Text style={styles.savingsLabel}>Estimated Savings</Text>
+                  <Divider style={styles.divider} />
+                  <View style={styles.pointsBreakdown}>
+                    {pointsInfo.bonusPoints > 0 ? (
+                      <View style={styles.pointsBreakdownRow}>
+                        <Text style={styles.pointsBreakdownItem}>
+                          Check-ins: {pointsInfo.checkinPoints} pts • Bonus: {pointsInfo.bonusPoints} pts
+                        </Text>
+                      </View>
+                    ) : noBonusReason ? (
+                      <View style={styles.noBonusContainer}>
+                        <Icon name="info" type="material" color="#FFA000" size={16} />
+                        <Text style={styles.noBonusText}>{noBonusReason}</Text>
+                      </View>
+                    ) : null}
                   </View>
                 </>
               )}
-              
-              {/* Show points breakdown for clarity */}
-              <Card.Divider style={styles.divider} />
-              <View style={styles.pointsBreakdown}>
-                <Text style={styles.pointsBreakdownTitle}>Points Breakdown:</Text>
-                <Text style={styles.pointsBreakdownItem}>
-                  Check-ins: {pointsInfo.checkinPoints} pts
-                </Text>
-                {pointsInfo.bonusPoints > 0 && (
-                  <Text style={styles.pointsBreakdownItem}>
-                    Completion Bonus: {pointsInfo.bonusPoints} pts
-                  </Text>
-                )}
-              </View>
-              
-              {noBonusReason && (
-                <View style={styles.noBonusContainer}>
-                  <Icon name="info" type="material" color="#FFA000" size={20} />
-                  <Text style={styles.noBonusText}>{noBonusReason}</Text>
-                </View>
-              )}
             </Card>
             
-            <Card containerStyle={styles.vendorsCard}>
-              <Card.Title>Vendors Visited</Card.Title>
-              <Card.Divider />
-              <FlatList
-                data={vendorsVisited}
-                renderItem={({ item }) => (
-                  <ListItem bottomDivider>
-                    <ListItem.Content>
-                      <ListItem.Title>{item.name}</ListItem.Title>
-                      <ListItem.Subtitle>
-                        {item.location?.address || 'Address unavailable'}
-                      </ListItem.Subtitle>
-                    </ListItem.Content>
-                    {item.checkedIn ? (
-                      <Icon name="check-circle" type="material" color="#4CAF50" />
-                    ) : (
-                      <Icon name="cancel" type="material" color="#E0E0E0" />
-                    )}
-                  </ListItem>
-                )}
-                keyExtractor={(item) => item.id}
-                scrollEnabled={false}
-                ListEmptyComponent={
-                  <Text style={styles.emptyText}>No vendors visited</Text>
-                }
-              />
-            </Card>
+            {/* Only show vendor card for multi-vendor journeys */}
+            {!isSingleVendorJourney && (
+              <Card containerStyle={styles.vendorsCard}>
+                <Card.Title>Vendors Visited</Card.Title>
+                <Card.Divider />
+                <FlatList
+                  data={vendorsVisited}
+                  renderItem={({ item }) => (
+                    <ListItem bottomDivider>
+                      <ListItem.Content>
+                        <ListItem.Title>{item.name}</ListItem.Title>
+                        <ListItem.Subtitle>
+                          {item.location?.address || 'Address unavailable'}
+                        </ListItem.Subtitle>
+                      </ListItem.Content>
+                      {(item.checkedIn || allVendorsCheckedIn) ? (
+                        <Icon name="check-circle" type="material" color="#4CAF50" />
+                      ) : (
+                        <Icon name="cancel" type="material" color="#E0E0E0" />
+                      )}
+                    </ListItem>
+                  )}
+                  keyExtractor={(item) => item.id}
+                  scrollEnabled={false}
+                  ListEmptyComponent={
+                    <Text style={styles.emptyText}>No vendors visited</Text>
+                  }
+                />
+              </Card>
+            )}
             
+            {/* Improved Action Buttons with more space */}
             <View style={styles.actionsContainer}>
               {isSuccess ? (
                 // Actions for successful completion
                 <>
+                  {/* Return Home button is now more prominent and above other actions */}
                   <Button
-                    title="Share Journey"
+                    title="Return to Home"
                     icon={{
-                      name: "share",
+                      name: "home",
                       type: "material",
-                      size: 20,
+                      size: 22,
                       color: "white"
                     }}
-                    buttonStyle={styles.shareButton}
+                    buttonStyle={styles.homeButton}
                     containerStyle={styles.buttonContainer}
-                    onPress={() => {
-                      // In a real app, this would open a share dialog
-                      alert('Sharing functionality will be implemented in a future update.');
-                    }}
+                    titleStyle={styles.buttonTitle}
+                    onPress={() => navigation.reset({
+                      index: 0,
+                      routes: [{ name: 'MainTabs' }],
+                    })}
                   />
                   
-                  <Button
-                    title="Start New Journey"
-                    icon={{
-                      name: "add-location",
-                      type: "material",
-                      size: 20,
-                      color: "white"
-                    }}
-                    buttonStyle={styles.newJourneyButton}
-                    containerStyle={styles.buttonContainer}
-                    onPress={() => navigation.navigate('DealSelection')}
-                  />
+                  <View style={styles.secondaryActionsRow}>
+                    {/* Only show birthday button for birthday journeys */}
+                    {journeyType === 'birthday' && (
+                      <Button
+                        title="Get MOAR Birthday Deals!!!"
+                        icon={{
+                          name: "cake",
+                          type: "material",
+                          size: 22,
+                          color: "white"
+                        }}
+                        buttonStyle={styles.birthdayButton}
+                        containerStyle={[styles.secondaryButtonContainer, { flex: 3 }]}
+                        titleStyle={styles.buttonTitle}
+                        onPress={() => navigation.navigate('BirthdayDeals')}
+                      />
+                    )}
+                    
+                    <Button
+                      title="Share"
+                      icon={{
+                        name: "share",
+                        type: "material",
+                        size: 22,
+                        color: "white"
+                      }}
+                      buttonStyle={styles.shareButton}
+                      containerStyle={[
+                        styles.secondaryButtonContainer, 
+                        { flex: journeyType === 'birthday' ? 2 : 1 }
+                      ]}
+                      titleStyle={styles.buttonTitle}
+                      onPress={() => {
+                        // In a real app, this would open a share dialog
+                        alert('Sharing functionality will be implemented in a future update.');
+                      }}
+                    />
+                  </View>
                 </>
               ) : (
                 // Actions for early termination
@@ -357,24 +416,6 @@ const JourneyComplete = ({ navigation, route }) => {
                   />
                 </>
               )}
-              
-              <Button
-                title="Return to Home"
-                type="outline"
-                icon={{
-                  name: "home",
-                  type: "material",
-                  size: 20,
-                  color: "#4CAF50"
-                }}
-                buttonStyle={styles.homeButton}
-                containerStyle={styles.buttonContainer}
-                titleStyle={{ color: '#4CAF50' }}
-                onPress={() => navigation.reset({
-                  index: 0,
-                  routes: [{ name: 'MainTabs' }],
-                })}
-              />
             </View>
           </>
         ) : (
@@ -394,7 +435,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   scrollContent: {
-    padding: 16,
+    padding: 20,
+    paddingBottom: 40,
   },
   loadingContainer: {
     flex: 1,
@@ -403,113 +445,120 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   headerSection: {
-    alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 30,
+    paddingVertical: 20,
   },
-  confettiContainer: {
-    height: 100,
+  iconTextRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
+  },
+  headerTextContainer: {
+    flex: 1,
+    marginLeft: 20,
   },
   congrats: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#4CAF50',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   journeyComplete: {
     fontSize: 22,
     fontWeight: 'bold',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   terminatedText: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#7E7E7E',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   terminatedSubText: {
     fontSize: 18,
     color: '#666666',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   journeyType: {
     fontSize: 18,
     color: '#666666',
+    marginTop: 4,
   },
+  // Enlarged Stats Card Styles
   statsCard: {
-    borderRadius: 8,
-    marginBottom: 16,
+    borderRadius: 10,
+    marginBottom: 30,
+    padding: 18,
+    paddingBottom: 12,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
-  statsContainer: {
+  statsGrid: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 8,
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 10,
   },
   statItem: {
+    width: '48%',
+    marginBottom: 18,
+  },
+  statRow: {
+    flexDirection: 'row',
     alignItems: 'center',
   },
   statValue: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
-    marginTop: 8,
-    marginBottom: 4,
+    marginLeft: 10,
   },
   statLabel: {
-    fontSize: 14,
+    fontSize: 15,
     color: '#666666',
+    marginLeft: 38, // Align with icon + value
+    marginTop: 4,
   },
-  savingsContainer: {
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  savingsAmount: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#4CAF50',
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  savingsLabel: {
-    fontSize: 14,
-    color: '#666666',
+  divider: {
+    marginVertical: 12,
   },
   pointsBreakdown: {
-    padding: 12,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+    paddingTop: 4,
   },
-  pointsBreakdownTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 8,
+  pointsBreakdownRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
   },
   pointsBreakdownItem: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#666666',
-    marginBottom: 4,
+    textAlign: 'center',
   },
   noBonusContainer: {
     backgroundColor: '#FFF8E1',
     borderRadius: 8,
     padding: 12,
-    marginTop: 8,
-    marginBottom: 16,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
   noBonusText: {
     flex: 1,
-    marginLeft: 8,
+    marginLeft: 12,
     fontSize: 14,
     color: '#F57C00',
-    lineHeight: 20,
   },
-  divider: {
-    marginVertical: 15,
-  },
+  // Vendor Card Styles (only shown for multi-vendor journeys)
   vendorsCard: {
-    borderRadius: 8,
-    marginBottom: 16,
+    borderRadius: 10,
+    marginBottom: 30,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
   emptyText: {
     textAlign: 'center',
@@ -517,43 +566,55 @@ const styles = StyleSheet.create({
     color: '#666666',
     fontStyle: 'italic',
   },
+  // Improved Action Button Styles
   actionsContainer: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   buttonContainer: {
-    marginBottom: 12,
+    marginBottom: 16,
+  },
+  secondaryActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  secondaryButtonContainer: {
+    marginHorizontal: 5,
+  },
+  buttonTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  homeButton: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 14,
   },
   shareButton: {
     backgroundColor: '#2196F3',
     borderRadius: 8,
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
-  newJourneyButton: {
-    backgroundColor: '#4CAF50',
+  birthdayButton: {
+    backgroundColor: '#FF4081',
     borderRadius: 8,
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
   confirmButton: {
     backgroundColor: '#F44336',
     borderRadius: 8,
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
   cancelButton: {
     borderColor: '#4CAF50',
     borderRadius: 8,
-    paddingVertical: 12,
-  },
-  homeButton: {
-    borderColor: '#4CAF50',
-    borderRadius: 8,
-    paddingVertical: 12,
+    paddingVertical: 14,
   },
   confirmationText: {
     fontSize: 16,
     color: '#666666',
     textAlign: 'center',
-    marginBottom: 16,
-    lineHeight: 22,
+    marginBottom: 20,
+    lineHeight: 24,
   },
 });
 

@@ -8,6 +8,7 @@ import env from '../config/env';
 import serviceProvider from './ServiceProvider';
 import redemptionService from './RedemptionService';
 import vendorCacheService from './VendorCacheService';
+import dealCacheService from './DealCacheService';
 
 /**
  * Service for route planning, optimization, and journey tracking
@@ -72,13 +73,13 @@ class RouteService {
   }
   
   /**
-   * Create an optimized route
+   * Create a route based on deal type and user location
    * @param {Object} options - Route options
-   * @param {string} options.dealType - Type of deals to include
+   * @param {string} options.dealType - Type of deals to include (birthday, daily, special)
    * @param {number} options.maxVendors - Maximum number of vendors to include
-   * @param {number} options.maxDistance - Maximum distance in miles (currently ignored)
+   * @param {Array} options.skipVendorIds - Vendor IDs to exclude
    * @param {Object} options.startLocation - Starting location coordinates
-   * @returns {Promise<Object>} - Route object with vendors and navigation info
+   * @returns {Promise<Object>} - Route result
    */
   async createRoute(options) {
     try {
@@ -87,170 +88,185 @@ class RouteService {
       const {
         dealType,
         maxVendors = 5,
+        maxDistance = 50,
         skipVendorIds = []
       } = options;
       
-      // Set default location to Anchorage regardless of device location
-      // This ensures consistent testing in the emulator
-      const userLocation = {
-        latitude: 61.2258749,
-        longitude: -149.8097877
-      };
+      // Use user's provided start location or attempt to get current location
+      let userLocation;
       
-      Logger.info(LogCategory.NAVIGATION, 'Using Anchorage as default location for route', { userLocation });
-      
-      // Get ALL vendors from cache without filtering
-      let vendors = vendorCacheService.getAllVendors();
-      
-      Logger.debug(LogCategory.NAVIGATION, 'Total vendors loaded from cache', { count: vendors.length });
-      
-      // Only do minimal filtering based on dealType and skip specified vendor IDs
-      let filteredVendors = vendors.filter(vendor => {
-        // Skip specified vendor IDs
-        if (skipVendorIds.includes(vendor.id)) {
-          return false;
+      if (options.startLocation) {
+        userLocation = options.startLocation;
+        Logger.info(LogCategory.NAVIGATION, 'Using provided start location', { userLocation });
+      } else {
+        try {
+          // Try to get user's current location
+          const location = await locationService.getCurrentLocation();
+          if (location && location.coords) {
+            userLocation = {
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude
+            };
+            Logger.info(LogCategory.NAVIGATION, 'Using user\'s current location', { userLocation });
+          } else {
+            // Fall back to default Anchorage location
+            userLocation = {
+              latitude: 61.2181,
+              longitude: -149.9003
+            };
+            Logger.info(LogCategory.NAVIGATION, 'Using default Anchorage location', { userLocation });
+          }
+        } catch (error) {
+          Logger.error(LogCategory.NAVIGATION, 'Error getting user location, using default', { error });
+          
+          // Default to Anchorage
+          userLocation = {
+            latitude: 61.2181,
+            longitude: -149.9003
+          };
+          Logger.info(LogCategory.NAVIGATION, 'Using Anchorage as default location for route', { userLocation });
         }
-        
-        // Skip vendors without deals or coordinates
-        if (!vendor.deals || !vendor.location?.coordinates) {
-          return false;
-        }
-        
-        // Check if vendor has the appropriate deal type
-        switch (dealType) {
-          case 'birthday':
-            return !!vendor.deals.birthday;
-          case 'daily':
-            const today = this.getCurrentDayOfWeek();
-            return vendor.deals.daily && 
-                  vendor.deals.daily[today] && 
-                  vendor.deals.daily[today].length > 0;
-          case 'special':
-            return vendor.deals.special && 
-                  Array.isArray(vendor.deals.special) && 
-                  vendor.deals.special.length > 0;
-          default:
-            // For any other deal type, include all vendors
-            return true;
-        }
+      }
+      
+      // Import the proximity query utility
+      const { findNearbyVendorsWithDeals } = await import('../utils/ProximityQueryUtils');
+      
+      // Find vendors with deals of the specified type, sorted by proximity
+      Logger.debug(LogCategory.NAVIGATION, 'Calling findNearbyVendorsWithDeals with parameters', {
+        userLocation,
+        dealType,
+        maxDistance,
+        maxResultsRequested: maxVendors * 2
       });
       
-      Logger.debug(LogCategory.NAVIGATION, 'Vendors after basic deal type filtering', { 
-        count: filteredVendors.length 
-      });
+      // Find vendors with deals
+      const result = await findNearbyVendorsWithDeals(
+        userLocation,
+        dealType,
+        maxDistance,
+        maxVendors * 2 // Get more than we need to account for filtering
+      );
       
-      // DISTANCE FILTERING DISABLED FOR EMULATOR TESTING
-      // Instead, just add a synthetic distance property based on Anchorage
-      filteredVendors = filteredVendors.map(vendor => {
-        // Add synthetic distance just for display purposes
-        if (vendor.location?.coordinates) {
-          vendor.distance = locationService.calculateDistance(
-            userLocation.latitude,
-            userLocation.longitude,
-            vendor.location.coordinates.latitude,
-            vendor.location.coordinates.longitude
-          );
-        } else {
-          // Add random distance between 1-10 miles if coordinates missing
-          vendor.distance = Math.floor(Math.random() * 10) + 1;
-        }
-        return vendor;
-      });
-      
-      // Sort by vendor name instead of distance for consistent testing
-      filteredVendors.sort((a, b) => {
-        if (!a.name) return 1;
-        if (!b.name) return -1;
-        return a.name.localeCompare(b.name);
-      });
-      
-      // Limit number of vendors
-      filteredVendors = filteredVendors.slice(0, maxVendors);
-      
-      // If no vendors found even with minimal filtering, use fallback
-      if (filteredVendors.length === 0) {
-        // Fallback: Use any vendors with coordinates, regardless of deal type
-        Logger.warn(LogCategory.NAVIGATION, 'No vendors with specified deal type found, using fallback');
+      if (!result.vendors || result.vendors.length === 0) {
+        Logger.warn(LogCategory.NAVIGATION, `No vendors found with ${dealType} deals`, { dealType });
         
-        filteredVendors = vendors
-          .filter(v => v.location?.coordinates) // Only vendors with coordinates
-          .slice(0, maxVendors); // Limit to max vendors
+        // For development: if we can't find any vendors, check if we have any deals of this type in cache
+        const dealsOfType = dealCacheService.getAllDeals({ type: dealType });
         
-        // Add synthetic distance if needed
-        filteredVendors = filteredVendors.map(vendor => {
-          // Add random distance between 1-10 miles for testing
-          vendor.distance = Math.floor(Math.random() * 10) + 1;
-          return vendor;
-        });
-        
-        // Add synthetic deals if needed
-        filteredVendors = filteredVendors.map(vendor => {
-          // Ensure vendor has deals structure
-          if (!vendor.deals) {
-            vendor.deals = {
-              daily: {},
-              birthday: null,
-              special: []
+        if (dealsOfType && dealsOfType.length > 0) {
+          Logger.debug(LogCategory.NAVIGATION, `Found ${dealsOfType.length} ${dealType} deals in cache but no vendors in proximity query`, {
+            dealCount: dealsOfType.length,
+            vendorIds: dealsOfType.map(d => d.vendorId)
+          });
+          
+          // If no vendors found but we have deals, attempt to use the deals directly
+          // This is a fallback for development/testing
+          let vendorsFromDeals = [];
+          
+          // Get unique vendor IDs from deals
+          const vendorIds = [...new Set(dealsOfType.map(deal => deal.vendorId))];
+          
+          // Get vendors by ID and calculate distances
+          for (const vendorId of vendorIds) {
+            const vendor = vendorCacheService.getVendorById(vendorId);
+            if (vendor && vendor.location?.coordinates) {
+              // Calculate distance
+              const distance = this.calculateDistance(
+                userLocation.latitude,
+                userLocation.longitude,
+                vendor.location.coordinates.latitude,
+                vendor.location.coordinates.longitude
+              );
+              
+              vendorsFromDeals.push({
+                ...vendor,
+                distance,
+                dealType // Add deal type for filtering
+              });
+            }
+          }
+          
+          // Sort by distance
+          vendorsFromDeals.sort((a, b) => a.distance - b.distance);
+          
+          // Use these vendors if we found any
+          if (vendorsFromDeals.length > 0) {
+            Logger.info(LogCategory.NAVIGATION, `Using ${vendorsFromDeals.length} vendors from deal cache as fallback`, {
+              count: vendorsFromDeals.length
+            });
+            
+            // Override result
+            result.vendors = vendorsFromDeals;
+          } else {
+            return {
+              success: false,
+              error: `No ${dealType} deals available. Please try a different deal type.`,
+              vendors: []
             };
           }
-          
-          // Add synthetic deal based on requested type
-          switch (dealType) {
-            case 'birthday':
-              if (!vendor.deals.birthday) {
-                vendor.deals.birthday = {
-                  description: 'Birthday Special (Test)',
-                  discount: 'Special discount for your birthday',
-                  restrictions: ['Valid during your birthday month']
-                };
-              }
-              break;
-            case 'daily':
-              const today = this.getCurrentDayOfWeek();
-              if (!vendor.deals.daily) {
-                vendor.deals.daily = {};
-              }
-              if (!vendor.deals.daily[today] || !vendor.deals.daily[today].length) {
-                vendor.deals.daily[today] = [{
-                  description: 'Daily Special (Test)',
-                  discount: 'Today\'s special offer',
-                  restrictions: []
-                }];
-              }
-              break;
-            case 'special':
-              if (!vendor.deals.special || !vendor.deals.special.length) {
-                vendor.deals.special = [{
-                  title: 'Limited Time Offer (Test)',
-                  description: 'Special promotion',
-                  discount: 'Limited time discount',
-                  startDate: new Date().toISOString(),
-                  endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days from now
-                  restrictions: []
-                }];
-              }
-              break;
-          }
-          
-          return vendor;
+        } else {
+          return {
+            success: false,
+            error: `No ${dealType} deals available. Please try a different deal type.`,
+            vendors: []
+          };
+        }
+      }
+      
+      // Filter out vendors to skip
+      let vendors = result.vendors.filter(vendor => !skipVendorIds.includes(vendor.id));
+      
+      Logger.debug(LogCategory.NAVIGATION, 'Vendors after skip filtering', { 
+        count: vendors.length,
+        dealType,
+        filteredOut: result.vendors.length - vendors.length
+      });
+      
+      // Filter out vendors whose deals have already been redeemed today
+      const vendorsBeforeRedemptionFilter = vendors.length;
+      vendors = await redemptionService.filterRedeemableVendors(vendors, dealType);
+      
+      Logger.debug(LogCategory.NAVIGATION, 'Vendors after redemption filtering', { 
+        count: vendors.length,
+        dealType,
+        filteredOut: vendorsBeforeRedemptionFilter - vendors.length
+      });
+      
+      // If we have no vendors after redemption filtering, return a specific error
+      if (vendors.length === 0 && vendorsBeforeRedemptionFilter > 0) {
+        Logger.warn(LogCategory.NAVIGATION, 'All vendors filtered out due to redemption rules', {
+          dealType,
+          originalCount: vendorsBeforeRedemptionFilter
         });
         
-        Logger.debug(LogCategory.NAVIGATION, 'Using fallback vendors', { count: filteredVendors.length });
+        return {
+          success: false,
+          error: `All ${dealType} deals have already been redeemed today. Please try again tomorrow or choose a different deal type.`,
+          vendors: []
+        };
       }
+      
+      // Limit to maxVendors
+      vendors = vendors.slice(0, maxVendors);
       
       // Final check if we have any vendors
-      if (filteredVendors.length === 0) {
-        throw new Error('No eligible vendors found for route');
+      if (vendors.length === 0) {
+        Logger.warn(LogCategory.NAVIGATION, 'No eligible vendors found for route after all filtering');
+        return {
+          success: false,
+          error: 'No eligible vendors found. You may have already redeemed all available deals today. Try again tomorrow or choose a different deal type.',
+          vendors: []
+        };
       }
       
-      // Create synthetic route data for testing
-      const totalDistance = filteredVendors.reduce((sum, vendor) => sum + (vendor.distance || 0), 0);
-      const estimatedTime = totalDistance * 3 + filteredVendors.length * 10; // 3 min per mile + 10 min per stop
+      // Create route data
+      const totalDistance = vendors.reduce((sum, vendor) => sum + (vendor.distance || 0), 0);
+      const estimatedTime = totalDistance * 3 + vendors.length * 10; // 3 min per mile + 10 min per stop
       
       const route = {
         totalDistance,
         estimatedTime,
-        coordinates: filteredVendors.map(v => v.location?.coordinates || {
+        coordinates: vendors.map(v => v.location?.coordinates || {
           latitude: 61.2258749 + (Math.random() * 0.1 - 0.05),
           longitude: -149.8097877 + (Math.random() * 0.1 - 0.05)
         })
@@ -258,13 +274,25 @@ class RouteService {
       
       return {
         success: true,
-        vendors: filteredVendors,
+        vendors,
         route
       };
     } catch (error) {
       Logger.error(LogCategory.NAVIGATION, 'Error creating route', { error });
       throw error;
     }
+  }
+  
+  /**
+   * Calculate distance between two points
+   * @param {number} lat1 - Latitude of first point
+   * @param {number} lon1 - Longitude of first point
+   * @param {number} lat2 - Latitude of second point
+   * @param {number} lon2 - Longitude of second point
+   * @returns {number} - Distance in miles
+   */
+  calculateDistance(lat1, lon1, lat2, lon2) {
+    return locationService.calculateDistance(lat1, lon1, lat2, lon2);
   }
   
   /**
@@ -299,6 +327,17 @@ class RouteService {
           return vendor.deals.daily && 
                  vendor.deals.daily[currentDay] && 
                  vendor.deals.daily[currentDay].length > 0;
+        case 'multi_day':
+          // Check for multi-day deals that include the current day
+          const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+          const today = days[new Date().getDay()];
+          return vendor.deals.multi_day && 
+                 Array.isArray(vendor.deals.multi_day) && 
+                 vendor.deals.multi_day.some(deal => 
+                   deal.activeDays && 
+                   Array.isArray(deal.activeDays) && 
+                   deal.activeDays.includes(today)
+                 );
         case 'special':
           // Check for active special deals
           const now = new Date();

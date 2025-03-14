@@ -187,6 +187,63 @@ export const DealService = {
   },
   
   /**
+   * Get multi-day deals for a specific day
+   * @param {string} day - Day of week (lowercase)
+   * @param {Object} options - Filter options
+   * @returns {Promise<Array>} - Array of multi-day deals
+   */
+  getMultiDayDeals: async (day, options = {}) => {
+    try {
+      // Validate day parameter
+      if (!env.DAYS_OF_WEEK.includes(day)) {
+        throw new Error(`Invalid day: ${day}. Must be one of: ${env.DAYS_OF_WEEK.join(', ')}`);
+      }
+      
+      const response = await apiClient.get(`/deals/multi-day/${day}`, { params: options });
+      
+      // Cache multi-day deals
+      if (response.data && Array.isArray(response.data)) {
+        try {
+          const cacheKey = `multi_day_deals_${day}_${JSON.stringify(options)}`;
+          await AsyncStorage.setItem(
+            cacheKey, 
+            JSON.stringify({
+              timestamp: Date.now(),
+              data: response.data
+            })
+          );
+        } catch (cacheError) {
+          Logger.warn(LogCategory.STORAGE, `Failed to cache multi-day deals for ${day}`, { cacheError });
+        }
+      }
+      
+      return response.data;
+    } catch (error) {
+      // Try to get cached multi-day deals if network request fails
+      Logger.error(LogCategory.DEALS, `Failed to fetch multi-day deals for ${day}`, { error });
+      
+      try {
+        const cacheKey = `multi_day_deals_${day}_${JSON.stringify(options)}`;
+        const cachedData = await AsyncStorage.getItem(cacheKey);
+        
+        if (cachedData) {
+          const parsed = JSON.parse(cachedData);
+          
+          // Return cached data if it's not too old
+          if (Date.now() - parsed.timestamp < env.CACHE_TTL) {
+            Logger.info(LogCategory.DEALS, `Using cached multi-day deals for ${day}`);
+            return parsed.data;
+          }
+        }
+      } catch (cacheError) {
+        Logger.warn(LogCategory.STORAGE, `Failed to retrieve cached multi-day deals for ${day}`, { cacheError });
+      }
+      
+      throw handleApiError(error);
+    }
+  },
+  
+  /**
    * Get birthday deals
    * @param {Object} options - Filter options
    * @returns {Promise<Array>} - Array of birthday deals

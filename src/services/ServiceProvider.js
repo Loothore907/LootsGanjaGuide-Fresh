@@ -12,7 +12,6 @@ import redemptionService from './RedemptionService';
 
 /**
  * Service provider that exclusively uses Firebase
- * We've removed all mock data functionality completely
  */
 class ServiceProvider {
   constructor() {
@@ -47,6 +46,22 @@ class ServiceProvider {
       Logger.error(LogCategory.GENERAL, 'Error initializing Firebase ServiceProvider', { error });
       throw error;
     }
+  }
+
+  /**
+   * Get the DealRepository instance
+   * @returns {DealRepository} - Deal repository instance
+   */
+  getDealRepository() {
+    return this.dealRepository;
+  }
+
+  /**
+   * Get the VendorRepository instance
+   * @returns {VendorRepository} - Vendor repository instance
+   */
+  getVendorRepository() {
+    return this.vendorRepository;
   }
 
   /**
@@ -124,6 +139,25 @@ class ServiceProvider {
 
   async getSpecialDeals(options = {}) {
     return await this.dealRepository.getSpecialDeals(options);
+  }
+  
+  /**
+   * Get everyday deals
+   * @param {Object} options - Filter options
+   * @returns {Promise<Array>} - Array of everyday deals
+   */
+  async getEverydayDeals(options = {}) {
+    return await this.dealRepository.getEverydayDeals(options);
+  }
+
+  /**
+   * Get multi-day deals for a specific day
+   * @param {string} day - Day of week
+   * @param {Object} options - Filter options
+   * @returns {Promise<Array>} Array of multi-day deals for the specified day
+   */
+  async getMultiDayDeals(day, options = {}) {
+    return await this.dealRepository.getMultiDayDeals(day, options);
   }
 
   // Journey/Route service methods

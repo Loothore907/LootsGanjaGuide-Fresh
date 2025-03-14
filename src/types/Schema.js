@@ -30,6 +30,7 @@ const DayOfWeek = {
 const DealType = {
   BIRTHDAY: 'birthday',
   DAILY: 'daily',
+  MULTI_DAY: 'multi_day',
   SPECIAL: 'special',
   EVERYDAY: 'everyday'
 };
@@ -335,6 +336,30 @@ const isValidSpecialDeal = (deal) => {
 };
 
 /**
+ * Validates a multi-day deal object against the schema
+ * @param {Object} deal - Multi-day deal object to validate
+ * @returns {boolean} True if valid
+ */
+const isValidMultiDayDeal = (deal) => {
+  if (!isValidDeal(deal)) return false;
+  
+  // Multi-day deals must have activeDays array
+  if (!deal.activeDays || !Array.isArray(deal.activeDays) || deal.activeDays.length === 0) {
+    return false;
+  }
+  
+  // Ensure all activeDays values are valid day strings
+  const validDays = Object.values(DayOfWeek);
+  for (const day of deal.activeDays) {
+    if (!validDays.includes(day)) {
+      return false;
+    }
+  }
+  
+  return true;
+};
+
+/**
  * Checks if a vendor is in a specific region based on ZIP code
  * @param {Object} vendor - Vendor object to check
  * @param {Object} region - Region object with zipCodes array
@@ -382,6 +407,7 @@ module.exports = {
   isValidVendor,
   isValidDeal,
   isValidSpecialDeal,
+  isValidMultiDayDeal,
   isVendorInRegion,
   extractZipCodeFromAddress
 }; 

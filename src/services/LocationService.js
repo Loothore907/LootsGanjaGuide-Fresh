@@ -184,7 +184,10 @@ class LocationService {
         if (location && location.coords) {
           Logger.info(LogCategory.LOCATION, 'Using Expo last known location', {
             latitude: location.coords.latitude,
-            longitude: location.coords.longitude
+            longitude: location.coords.longitude,
+            provider: location.coords.provider,
+            accuracy: location.coords.accuracy,
+            timestamp: new Date(location.timestamp).toISOString()
           });
           
           return {
@@ -208,7 +211,8 @@ class LocationService {
             
             Logger.info(LogCategory.LOCATION, 'Using stored location from AsyncStorage', {
               latitude: parsedLocation.latitude,
-              longitude: parsedLocation.longitude
+              longitude: parsedLocation.longitude,
+              source: 'AsyncStorage'
             });
             
             return parsedLocation;
@@ -225,7 +229,8 @@ class LocationService {
         
         Logger.info(LogCategory.LOCATION, 'Using in-memory cached location', {
           latitude: this.lastKnownLocation.latitude,
-          longitude: this.lastKnownLocation.longitude
+          longitude: this.lastKnownLocation.longitude,
+          source: 'Memory cache'
         });
         
         return this.lastKnownLocation;
@@ -240,21 +245,45 @@ class LocationService {
       // In development mode, use default location without warning
       // In production, return null to indicate failure
       if (__DEV__) {
-        Logger.warn(LogCategory.LOCATION, 'Using default Anchorage location (dev only)');
+        Logger.warn(LogCategory.LOCATION, 'Using default Anchorage location (dev only)', {
+          latitude: defaultLocation.latitude,
+          longitude: defaultLocation.longitude,
+          source: 'Default Anchorage',
+          environment: 'development'
+        });
+        
+        // Extra debugging to help understand the location discrepancy
+        Logger.debug(LogCategory.LOCATION, 'IMPORTANT: The map UI may show a different location (California) due to emulator settings, but the app is using Anchorage coordinates for vendor distance calculations', {
+          warning: 'Location mismatch',
+          simulatorLocation: 'The map may show your device is in California',
+          appLocation: 'The app is using Anchorage for all distance calculations',
+          vendorLocations: 'All vendors are in Alaska'
+        });
+        
         return defaultLocation;
       } else {
-        Logger.warn(LogCategory.LOCATION, 'No fallback location available in production');
+        Logger.warn(LogCategory.LOCATION, 'No fallback location available in production', {
+          error: 'Location services unavailable',
+          impact: 'Distance-based features may be limited'
+        });
         return null;
       }
     } catch (error) {
       Logger.error(LogCategory.LOCATION, 'Error in getFallbackLocation', { error });
       
-      // Last resort fallback for dev mode only
+      // Last resort fallback: Return Anchorage in development
       if (__DEV__) {
-        return {
-          latitude: 61.2181, // Anchorage, Alaska
+        const emergencyLocation = {
+          latitude: 61.2181,
           longitude: -149.9003
         };
+        
+        Logger.error(LogCategory.LOCATION, 'EMERGENCY FALLBACK: Using Anchorage location after error', {
+          latitude: emergencyLocation.latitude,
+          longitude: emergencyLocation.longitude
+        });
+        
+        return emergencyLocation;
       }
       
       return null;

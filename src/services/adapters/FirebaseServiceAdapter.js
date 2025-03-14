@@ -10,7 +10,6 @@ import locationService from '../LocationService';
 
 /**
  * Adapter class that bridges existing service calls to Firebase repositories
- * This provides a smooth transition path from mock data to Firebase
  */
 class FirebaseServiceAdapter {
   constructor() {
@@ -196,6 +195,15 @@ class FirebaseServiceAdapter {
         userLocation
       };
       
+      // Log the categories if provided
+      if (options.categories && Array.isArray(options.categories)) {
+        Logger.info(LogCategory.DEALS, 'Filtering daily deals by categories', { 
+          categories: options.categories,
+          day
+        });
+        repoOptions.categories = options.categories;
+      }
+      
       // Pass region filtering options directly to the repository
       if (options.activeRegionsOnly !== undefined) {
         repoOptions.activeRegionsOnly = options.activeRegionsOnly;
@@ -221,6 +229,68 @@ class FirebaseServiceAdapter {
       return await this.dealRepository.getDailyDeals(day, repoOptions);
     } catch (error) {
       Logger.error(LogCategory.DEALS, 'Error in getDailyDeals adapter', { error, day });
+      throw error;
+    }
+  }
+
+  /**
+   * Get multi-day deals for a specific day
+   * @param {string} day - Day of week
+   * @param {Object} options - Filter options 
+   * @returns {Promise<Array>} - Array of multi-day deals for the day
+   */
+  async getMultiDayDeals(day, options = {}) {
+    try {
+      if (!day) {
+        day = this.getCurrentDayOfWeek();
+      }
+      
+      // Get user location for distance calculations if needed
+      let userLocation = null;
+      if (options.includeDistance !== false) {
+        userLocation = await locationService.getCurrentLocation();
+      }
+      
+      // Prepare options for repository
+      const repoOptions = {
+        ...options,
+        userLocation
+      };
+      
+      // Log the categories if provided
+      if (options.categories && Array.isArray(options.categories)) {
+        Logger.info(LogCategory.DEALS, 'Filtering multi-day deals by categories', { 
+          categories: options.categories,
+          day
+        });
+        repoOptions.categories = options.categories;
+      }
+      
+      // Pass region filtering options directly to the repository
+      if (options.activeRegionsOnly !== undefined) {
+        repoOptions.activeRegionsOnly = options.activeRegionsOnly;
+      }
+      
+      if (options.includePriorityRegions !== undefined) {
+        repoOptions.includePriorityRegions = options.includePriorityRegions;
+      }
+      
+      if (options.includeUnknownRegions !== undefined) {
+        repoOptions.includeUnknownRegions = options.includeUnknownRegions;
+      }
+      
+      if (options.activeRegions) {
+        repoOptions.activeRegions = options.activeRegions;
+      }
+      
+      if (options.priorityRegions) {
+        repoOptions.priorityRegions = options.priorityRegions;
+      }
+      
+      // Get multi-day deals from Firebase
+      return await this.dealRepository.getMultiDayDeals(day, repoOptions);
+    } catch (error) {
+      Logger.error(LogCategory.DEALS, 'Error in getMultiDayDeals adapter', { error, day });
       throw error;
     }
   }

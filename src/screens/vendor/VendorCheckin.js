@@ -9,7 +9,10 @@ import {
   Share,
   Platform,
   TouchableOpacity,
-  Modal
+  Modal,
+  ScrollView,
+  TextInput,
+  Dimensions
 } from 'react-native';
 import { 
   Text, 
@@ -19,39 +22,11 @@ import {
 } from '@rneui/themed';
 import serviceProvider from '../../services/ServiceProvider';
 
-// Import the Camera conditionally to avoid crashes if it's not available
-let Camera;
-// Add default Camera Constants to prevent undefined errors
-const CameraConstants = {
-  Type: {
-    back: 1,
-    front: 0
-  },
-  FlashMode: {
-    off: 0,
-    on: 1,
-    auto: 2,
-    torch: 1
-  }
-};
+// Import the QRScanner component instead of BarCodeScanner
+import QRScanner from '../../components/QRScanner';
 
-try {
-  Camera = require('expo-camera').Camera;
-  // Only override our constants if the import succeeded
-  if (Camera && Camera.Constants) {
-    CameraConstants.Type = Camera.Constants.Type;
-    CameraConstants.FlashMode = Camera.Constants.FlashMode;
-  }
-} catch (e) {
-  console.warn('Camera import failed:', e);
-  // Create a mock Camera component
-  Camera = ({ children, style, type, flashMode, onBarCodeScanned }) => (
-    <View style={[{ flex: 1, backgroundColor: 'black', justifyContent: 'center', alignItems: 'center' }, style]}>
-      <Text style={{ color: 'white', marginBottom: 20 }}>Camera preview not available</Text>
-      {children}
-    </View>
-  );
-}
+// Import Camera for permission requests
+import { Camera } from 'expo-camera';
 
 import * as Location from 'expo-location';
 import { useAppState, AppActions } from '../../context/AppStateContext';
@@ -62,58 +37,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import redemptionService from '../../services/RedemptionService';
 import locationService from '../../services/LocationService';
 import { Picker } from '@react-native-picker/picker';
+import VendorRepository from '../../repositories/VendorRepository';
 
-// Add this component inside VendorCheckin.js file, before the main VendorCheckin component
-const MockQRScanner = ({ onScan, onClose }) => {
-  const [vendorId, setVendorId] = useState('v1'); // Default test vendor
-  
-  const handleMockScan = () => {
-    // Simulate a QR code scan with the format "lootsganja://checkin/{vendorId}"
-    onScan({
-      type: 'QR',
-      data: `lootsganja://checkin/${vendorId}`
-    });
-  };
-  
-  return (
-    <View style={styles.mockScannerContainer}>
-      <Text style={styles.mockTitle}>Mock QR Scanner (Dev Only)</Text>
-      
-      <View style={styles.mockInputContainer}>
-        <Text>Select Vendor ID:</Text>
-        <Picker
-          selectedValue={vendorId}
-          onValueChange={(itemValue) => setVendorId(itemValue)}
-          style={styles.vendorPicker}
-        >
-          <Picker.Item label="Green Horizon (v1)" value="v1" />
-          <Picker.Item label="Aurora Dispensary (v2)" value="v2" />
-          <Picker.Item label="Northern Lights (v3)" value="v3" />
-          <Picker.Item label="Denali Dispensary (v4)" value="v4" />
-          <Picker.Item label="Arctic Buds (v5)" value="v5" />
-        </Picker>
-      </View>
-      
-      <Button
-        title="Simulate QR Scan"
-        onPress={handleMockScan}
-        buttonStyle={styles.scanButton}
-      />
-      
-      <Button
-        title="Cancel"
-        type="outline"
-        onPress={onClose}
-        buttonStyle={styles.cancelButton}
-      />
-      
-      <Text style={styles.mockNote}>
-        Mock QR data: lootsganja://checkin/{vendorId}
-      </Text>
-    </View>
-  );
-};
+// Get screen dimensions
+const { width } = Dimensions.get('window');
 
+// Main VendorCheckin component
 const VendorCheckin = ({ route, navigation }) => {
   const { state, dispatch } = useAppState();
   const { vendorId, fromJourney } = route.params || {};
@@ -127,7 +56,6 @@ const VendorCheckin = ({ route, navigation }) => {
   const [userLocation, setUserLocation] = useState(null);
   const [distance, setDistance] = useState(null);
   const [locationVerificationOpen, setLocationVerificationOpen] = useState(false);
-  const [showMockScanner, setShowMockScanner] = useState(false);
   
   // Request camera permissions and check if direct vendor ID was provided
   useEffect(() => {
@@ -139,22 +67,12 @@ const VendorCheckin = ({ route, navigation }) => {
         handleDirectCheckin(vendorId);
       } else {
         try {
-          // Only request camera permission if Camera is available
-          if (Camera && Camera.requestCameraPermissionsAsync) {
-            // Request camera permission
-            const { status } = await Camera.requestCameraPermissionsAsync();
-            if (isMounted) {
-              setHasPermission(status === 'granted');
+          const { status } = await Camera.requestCameraPermissionsAsync();
+          if (isMounted) {
+            setHasPermission(status === 'granted');
             
-              if (status !== 'granted') {
-                Logger.warn(LogCategory.PERMISSIONS, 'Camera permission was denied');
-              }
-            }
-          } else {
-            // Camera not available, set permission to false
-            if (isMounted) {
-              setHasPermission(false);
-              Logger.warn(LogCategory.PERMISSIONS, 'Camera is not available on this device');
+            if (status !== 'granted') {
+              Logger.warn(LogCategory.PERMISSIONS, 'Camera permission was denied');
             }
           }
         } catch (error) {
@@ -208,100 +126,36 @@ const VendorCheckin = ({ route, navigation }) => {
   };
   
   const handleDirectCheckin = async (id) => {
-    setIsLoading(true);
     try {
-      await tryCatch(async () => {
-        // Convert potential numeric string ID to string explicitly
-        const vendorIdStr = String(id);
-        
-        // Get vendor information - use serviceProvider instead of non-existent getVendorById
-        const vendor = await serviceProvider.getVendorById(vendorIdStr);
-        
-        // Check if vendor exists
-        if (!vendor) {
-          throw new Error(`No vendor found with ID: ${vendorIdStr}`);
-        }
-        
-        // Ensure hasQrCode property exists
-        if (vendor.hasQrCode === undefined) {
-          // Default to true for safety if not specified
-          vendor.hasQrCode = true;
-          Logger.warn(LogCategory.VENDOR, 'Vendor missing hasQrCode property, defaulting to true', {
-            vendorId: vendorIdStr,
-            vendorName: vendor.name
-          });
-        }
-        
-        setScannedVendor(vendor);
-        
-        // Get current location after setting vendor
-        await getCurrentLocation();
-        
-        // Process check-in (will happen when user confirms)
-        Logger.info(LogCategory.CHECKIN, 'Direct check-in initiated', { 
-          vendorId: vendorIdStr,
-          vendorName: vendor.name,
-          hasQrCode: vendor.hasQrCode
-        });
-      }, LogCategory.CHECKIN, 'getting vendor for direct check-in', true);
-    } catch (error) {
-      // Error already logged by tryCatch
-      navigation.goBack();
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  
-  const handleBarCodeScanned = async ({ type, data }) => {
-    if (scanned) return;
-    
-    setScanned(true);
-    setIsLoading(true);
-    
-    try {
-      // Verify QR code format
-      // Expected format: lootsganja://checkin/{vendorId}
-      if (data.startsWith('lootsganja://checkin/')) {
-        const scannedVendorId = data.replace('lootsganja://checkin/', '');
-        
-        await tryCatch(async () => {
-          // Explicitly convert to string to avoid type issues
-          const vendorIdStr = String(scannedVendorId);
-          
-          // Get vendor information - use serviceProvider instead of non-existent getVendorById
-          const vendor = await serviceProvider.getVendorById(vendorIdStr);
-          
-          if (!vendor) {
-            throw new Error(`No vendor found with ID: ${vendorIdStr}`);
-          }
-          
-          setScannedVendor(vendor);
-          
-          Logger.info(LogCategory.CHECKIN, 'Scanned check-in QR code', {
-            vendorId: vendorIdStr
-          });
-        }, LogCategory.CHECKIN, 'processing scanned QR code', true);
-      } else {
-        // Invalid QR code
-        Alert.alert(
-          'Invalid QR Code',
-          'This QR code is not a valid Loot\'s Ganja Guide check-in code. Please scan a code from a participating vendor.',
-          [
-            { 
-              text: 'OK', 
-              onPress: () => {
-                setScanned(false);
-                setIsLoading(false);
-              }
-            }
-          ]
-        );
+      const vendorIdStr = id.toString();
+      Logger.info(LogCategory.VENDOR, 'Direct check-in requested', { vendorId: vendorIdStr });
+      
+      // Get vendor from repository
+      const vendor = await VendorRepository.getById(vendorIdStr);
+      
+      if (!vendor) {
+        Logger.error(LogCategory.VENDOR, `Vendor not found for direct check-in`, { vendorId: vendorIdStr });
+        Alert.alert('Error', 'Vendor not found. Please try again.');
+        return;
       }
+      
+      // Ensure hasQrCode property exists without logging a warning
+      if (vendor.hasQrCode === undefined) {
+        vendor.hasQrCode = true;
+      }
+      
+      // Set as scanned vendor and proceed with check-in
+      setScannedVendor({
+        ...vendor,
+        hasQrCode: vendor.hasQrCode
+      });
+      
+      // Get current location for distance calculation
+      await getCurrentLocation();
+      
     } catch (error) {
-      // Error already logged by tryCatch
-      setScanned(false);
-    } finally {
-      setIsLoading(false);
+      Logger.error(LogCategory.VENDOR, 'Error in direct check-in', { error });
+      Alert.alert('Error', 'Failed to check in. Please try again.');
     }
   };
   
@@ -346,8 +200,13 @@ const VendorCheckin = ({ route, navigation }) => {
     setIsLoading(true);
     try {
       await tryCatch(async () => {
-        // Process check-in
-        const result = await serviceProvider.checkInAtVendor(scannedVendor.id);
+        // Process check-in with QR type and deal type
+        const result = await serviceProvider.checkInAtVendor(scannedVendor.id, {
+          checkInType: 'qr',
+          dealType: state.journey?.dealType || 'standard',
+          journeyId: state.journey?.id || null,
+          pointsOverride: 10 // Full points for QR check-in
+        });
         
         // Record the deal redemption
         await redemptionService.recordRedemption(
@@ -410,22 +269,84 @@ const VendorCheckin = ({ route, navigation }) => {
               text: 'Share',
               onPress: () => handleShareCheckin() 
             }]),
-            {
+            { 
               text: 'Continue',
-              onPress: () => handleContinueJourney()
+              onPress: () => navigateAfterCheckin()
             }
           ]
         );
-        
-        Logger.info(LogCategory.CHECKIN, 'User checked in successfully', {
-          vendorId: scannedVendor.id,
-          pointsEarned: result.pointsEarned
-        });
       }, LogCategory.CHECKIN, 'processing check-in', true);
     } catch (error) {
       // Error already logged by tryCatch
     } finally {
       setIsLoading(false);
+    }
+  };
+  
+  // Create a separate function for navigation after check-in to ensure state updates have propagated
+  const navigateAfterCheckin = () => {
+    // Ensure we have the most up-to-date journey state
+    const journey = state.journey;
+    const journeyVendors = journey?.vendors || [];
+    const currentIndex = journey?.currentVendorIndex || 0;
+    const isLastVendor = currentIndex >= journeyVendors.length - 1;
+    
+    if (journey && journey.isActive) {
+      // Count total visited vendors for journey stats
+      let visitedCount = 0;
+      journeyVendors.forEach(vendor => {
+        if (vendor.checkedIn) {
+          visitedCount++;
+        }
+      });
+      
+      // Include the current vendor as checked in for the journey data
+      // This ensures the last vendor shows as checked in even if state hasn't fully updated
+      const updatedVendors = journeyVendors.map((vendor, idx) => 
+        idx === currentIndex 
+          ? { ...vendor, checkedIn: true, checkInType: 'qr' } 
+          : vendor
+      );
+      
+      Logger.info(LogCategory.JOURNEY, 'Journey progress before navigation', {
+        currentIndex,
+        totalVendors: journeyVendors.length,
+        visitedCount,
+        isLastVendor,
+        updatedVendorsCount: updatedVendors.filter(v => v.checkedIn).length
+      });
+      
+      if (isLastVendor) {
+        // This is the last vendor, complete the journey
+        // Create a complete journey data object to pass with updated vendors
+        const completeJourneyData = {
+          journeyType: journey.dealType,
+          vendors: updatedVendors, // Use updated vendors that include the last check-in
+          currentVendorIndex: currentIndex,
+          totalVendors: journey.totalVendors,
+          visitedVendors: visitedCount + 1, // Include the current check-in
+          totalDistance: state.route?.totalDistance || 0,
+          allCheckedIn: true // Explicitly mark that all vendors are checked in
+        };
+        
+        // Use setTimeout to ensure state updates have time to propagate
+        setTimeout(() => {
+          // Navigate to journey complete with the data
+          navigation.navigate('JourneyComplete', { 
+            terminationType: "success",
+            journeyData: completeJourneyData
+          });
+        }, 300); // Short delay to allow for state updates
+      } else {
+        // Not the last vendor, advance to next vendor
+        dispatch(AppActions.nextVendor());
+        
+        // Navigate back to route view
+        navigation.navigate('RouteMapView');
+      }
+    } else {
+      // Just go to vendor profile
+      navigation.navigate('VendorProfile', { vendorId: scannedVendor.id });
     }
   };
   
@@ -454,73 +375,20 @@ const VendorCheckin = ({ route, navigation }) => {
         }
         
         // After sharing, continue with journey if applicable
-        handleContinueJourney();
+        navigateAfterCheckin();
       } else if (result.action === Share.dismissedAction) {
         // Dismissed
         Logger.info(LogCategory.SOCIAL, 'User dismissed share dialog');
         
         // Still continue with journey if applicable
-        handleContinueJourney();
+        navigateAfterCheckin();
       }
     } catch (error) {
       Logger.error(LogCategory.SOCIAL, 'Error sharing check-in', { error });
       Alert.alert('Sharing Failed', 'Could not share your check-in. Please try again.');
       
       // Continue anyway
-      handleContinueJourney();
-    }
-  };
-  
-  const handleContinueJourney = () => {
-    // Check if we're in a journey
-    if (fromJourney) {
-      // Get journey state
-      const journeyVendors = state.journey?.vendors || [];
-      const currentIndex = state.journey?.currentVendorIndex || 0;
-      const isLastVendor = currentIndex === journeyVendors.length - 1;
-      
-      // Count total visited vendors for journey stats
-      let visitedCount = 0;
-      journeyVendors.forEach(vendor => {
-        if (vendor.checkedIn) {
-          visitedCount++;
-        }
-      });
-      
-      Logger.info(LogCategory.JOURNEY, 'Journey progress', {
-        currentIndex,
-        totalVendors: journeyVendors.length,
-        visitedCount,
-        isLastVendor
-      });
-      
-      if (isLastVendor) {
-        // This is the last vendor, complete the journey
-        // Create a complete journey data object to pass
-        const completeJourneyData = {
-          journeyType: state.journey.dealType,
-          vendors: state.journey.vendors,
-          currentVendorIndex: state.journey.currentVendorIndex,
-          totalVendors: state.journey.totalVendors,
-          visitedVendors: visitedCount, // Make sure this is accurate
-          totalDistance: state.route?.totalDistance || 0
-        };
-        
-        // Navigate to journey complete with the data
-        navigation.navigate('JourneyComplete', { 
-          terminationType: "success",
-          journeyData: completeJourneyData
-        });
-      } else {
-        // Not the last vendor, advance to next vendor
-        dispatch(AppActions.nextVendor());
-        
-        // Navigate back to route view
-        navigation.navigate('RouteMapView');
-      }
-    } else {
-      // Just go to vendor profile
-      navigation.navigate('VendorProfile', { vendorId: scannedVendor.id });
+      navigateAfterCheckin();
     }
   };
   
@@ -569,7 +437,7 @@ const VendorCheckin = ({ route, navigation }) => {
       // Prepare share message
       const shareMessage = `${username} just checked in at ${vendor.name} using Loot's Ganja Guide! #LootsGanjaGuide #Cannabis #${vendor.name.replace(/\s+/g, '')}`;
       
-      // Log the sharing but don't actually perform sharing in this mock implementation
+      // Log the sharing for implementation
       Logger.info(LogCategory.SOCIAL, 'Auto-shared check-in', {
         vendor: vendor.name,
         socialTier: prefs.tier,
@@ -585,37 +453,32 @@ const VendorCheckin = ({ route, navigation }) => {
   
   // Modify handleManualCheckin to use the new location verification
   const handleManualCheckin = async (isQrSkip) => {
-    // Get location if we don't have it yet
-    if (!userLocation) {
-      await getCurrentLocation();
+    try {
+      Logger.info(LogCategory.VENDOR, 'Manual check-in initiated', { 
+        vendorId: scannedVendor?.id,
+        vendorName: scannedVendor?.name
+      });
+      
+      // Always award full points (10) for manual check-ins
+      await processManualCheckin(10, 'manual');
+      
+    } catch (error) {
+      Logger.error(LogCategory.VENDOR, 'Error in manual check-in', { error });
+      Alert.alert('Error', 'Failed to check in. Please try again.');
     }
-    
-    // If we have location and distance data, check if user is far from vendor
-    if (distance !== null && distance > 0.1) {
-      // Show location verification modal
-      setLocationVerificationOpen(true);
-      return;
-    }
-    
-    // Process the check-in with appropriate points
-    let pointsValue = 10; // Default points for QR or non-QR vendor
-    let checkInType = 'manual';
-    
-    if (scannedVendor.hasQrCode && isQrSkip) {
-      pointsValue = 5; // Half points for skipping QR at a QR-enabled vendor
-      checkInType = 'qr_skipped';
-    }
-    
-    // Process check-in
-    await processManualCheckin(pointsValue, checkInType);
   };
   
   // Process check-in with points and type
   const processManualCheckin = async (pointsValue, checkInType) => {
     setIsLoading(true);
     try {
-      // Process check-in
-      const result = await serviceProvider.checkInAtVendor(scannedVendor.id);
+      // Process check-in with manual type and deal type
+      const result = await serviceProvider.checkInAtVendor(scannedVendor.id, {
+        checkInType: checkInType,
+        dealType: state.journey?.dealType || 'standard',
+        journeyId: state.journey?.id || null,
+        pointsOverride: pointsValue
+      });
       
       // Record the deal redemption
       await redemptionService.recordRedemption(
@@ -665,7 +528,7 @@ const VendorCheckin = ({ route, navigation }) => {
           }]),
           {
             text: 'Continue',
-            onPress: () => handleContinueJourney()
+            onPress: () => navigateAfterCheckin()
           }
         ]
       );
@@ -683,189 +546,65 @@ const VendorCheckin = ({ route, navigation }) => {
     }
   };
   
-  // Determine what check-in options to show based on vendor status
-  const renderCheckinOptions = () => {
-    // Determine if vendor has QR code capability
-    const hasQrOption = scannedVendor.hasQrCode === true;
-    
-    return (
-      <View style={styles.checkinOptionsContainer}>
-        {hasQrOption ? (
-          // Vendor has QR code option
-          <>
-            <Button
-              title="Scan QR Code"
-              icon={{
-                name: "qr-code-scanner",
-                type: "material",
-                size: 20,
-                color: "white"
-              }}
-              onPress={activateScanner}
-              buttonStyle={styles.scanQrButton}
-              containerStyle={styles.buttonContainer}
-            />
-            
-            <Button
-              title="Skip QR Code (Half Points)"
-              icon={{
-                name: "eco",
-                type: "material",
-                size: 20,
-                color: "#666"
-              }}
-              type="outline"
-              onPress={() => handleManualCheckin(true)}
-              buttonStyle={styles.skipQrButton}
-              containerStyle={styles.buttonContainer}
-            />
-            
-            {/* Humorous message about QR codes */}
-            <View style={styles.qrInfoContainer}>
-              <Icon name="emoji-emotions" type="material" color="#4CAF50" size={20} />
-              <Text style={styles.qrInfoText}>
-                We get it - sometimes QR codes can be a pain! But they help us collect valuable data 
-                so we can build a better app. Plus, all those sweet rewards in the Points Shop? They're 
-                much easier to earn with full QR points! 🌿
-              </Text>
-            </View>
-            
-            <View style={styles.infoBox}>
-              <Icon name="info" type="material" size={20} color="#4CAF50" />
-              <Text style={styles.infoText}>
-                We use QR codes to collect valuable data that helps us improve the app experience for everyone! 
-                Full points for QR scans, half points for skipping.
-              </Text>
-            </View>
-          </>
-        ) : (
-          // Vendor without QR code option
-          <Button
-            title="I'm Here"
-            icon={{
-              name: "place",
-              type: "material",
-              size: 20,
-              color: "white"
-            }}
-            onPress={() => handleManualCheckin(false)}
-            buttonStyle={styles.imHereButton}
-            containerStyle={styles.buttonContainer}
-          />
-        )}
-      </View>
-    );
-  };
-
-  // Activate the QR scanner
-  const activateScanner = () => {
-    setShowScanner(true);
-  };
-  
-  if (hasPermission === null && !vendorId) {
-    return (
-      <View style={styles.centeredContainer}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={styles.permissionText}>Requesting camera permission...</Text>
-      </View>
-    );
-  }
-  
-  if (hasPermission === false && !vendorId) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.centeredContainer}>
-          <Icon name="camera-off" type="material" size={64} color="#F44336" />
-          <Text style={styles.permissionText}>
-            Camera permission is required to scan check-in QR codes.
-          </Text>
-          <Button
-            title="Grant Permission"
-            onPress={() => Linking.openSettings()}
-            buttonStyle={styles.permissionButton}
-            containerStyle={styles.buttonContainer}
-          />
-          <Button
-            title="Go Back"
-            type="outline"
-            onPress={handleCancel}
-            containerStyle={styles.buttonContainer}
-          />
-        </View>
-      </SafeAreaView>
-    );
-  }
-  
+  // Modify the camera view section
   if (scannedVendor) {
     // Show check-in confirmation or options
     return (
       <SafeAreaView style={styles.container}>
         {showScanner ? (
-          // Show QR scanner
+          // Show QR scanner using the QRScanner component
           <View style={styles.scannerContainer}>
-            {typeof Camera === 'function' ? (
-              <Camera
-                style={styles.scanner}
-                onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
-                type={CameraConstants.Type.back}
-                flashMode={torchOn ? CameraConstants.FlashMode.torch : CameraConstants.FlashMode.off}
-              >
-                <View style={styles.overlay}>
-                  <View style={styles.unfilled} />
-                  <View style={styles.row}>
-                    <View style={styles.unfilled} />
-                    <View style={styles.scanner} />
-                    <View style={styles.unfilled} />
-                  </View>
-                  <View style={styles.unfilled} />
-                </View>
-                
-                <View style={styles.instructionsContainer}>
-                  <Text style={styles.instructionsText}>
-                    Scan the QR code at {scannedVendor.name} to check in
-                  </Text>
-                </View>
-                
-                <TouchableOpacity 
-                  style={styles.torchButton}
-                  onPress={toggleTorch}
-                >
-                  <Icon 
-                    name={torchOn ? "flash-on" : "flash-off"} 
-                    type="material" 
-                    color="#FFFFFF" 
-                    size={24} 
-                  />
-                </TouchableOpacity>
-                
-                <Button
-                  title="Cancel"
-                  onPress={() => setShowScanner(false)}
-                  buttonStyle={styles.cancelButton}
-                  containerStyle={styles.cancelButtonContainer}
-                />
-              </Camera>
-            ) : (
-              // Fallback when Camera is not a valid component
-              <View style={styles.scanner}>
-                <View style={styles.mockScannerContainer}>
-                  <Text style={styles.mockTitle}>Camera Not Available</Text>
-                  <Text style={styles.cameraPlaceholder}>
-                    Camera functionality is not available on this device or in this environment.
-                  </Text>
-                  <Button
-                    title="Cancel"
-                    onPress={() => setShowScanner(false)}
-                    buttonStyle={styles.cancelButton}
-                    containerStyle={styles.buttonContainer}
-                  />
-                </View>
-              </View>
-            )}
+            <QRScanner
+              onScan={(data) => {
+                // Handle the scanned data
+                try {
+                  // Try to parse the QR code data
+                  let vendorId;
+                  try {
+                    const qrData = JSON.parse(data);
+                    vendorId = qrData.vendorId;
+                  } catch (e) {
+                    // If parsing fails, try to extract vendor ID from string
+                    const match = data.match(/vendorId[=:]["']?(\d+)/);
+                    if (match && match[1]) {
+                      vendorId = match[1];
+                    } else if (/^\d+$/.test(data)) {
+                      // If data is just a number, assume it's a vendor ID
+                      vendorId = data;
+                    }
+                  }
+                  
+                  if (vendorId) {
+                    // Process the vendor ID
+                    handleDirectCheckin(vendorId);
+                  } else {
+                    throw new Error('No vendor ID found in QR code');
+                  }
+                } catch (error) {
+                  Logger.error(LogCategory.VENDOR, 'Error processing QR code', { error });
+                  Alert.alert(
+                    'QR Code Error',
+                    'Could not process the QR code. Please try again or use manual check-in.',
+                    [
+                      {
+                        text: 'Try Again',
+                        onPress: () => setScanned(false)
+                      },
+                      {
+                        text: 'Manual Check-in',
+                        onPress: () => handleManualCheckin(false)
+                      }
+                    ]
+                  );
+                }
+              }}
+              onClose={handleCancel}
+              urlPrefix=""
+            />
           </View>
         ) : (
           // Show check-in options
-          <View style={styles.confirmContainer}>
+          <ScrollView contentContainerStyle={styles.scrollContent}>
             <Icon name="check-circle" type="material" size={64} color="#4CAF50" />
             <Text style={styles.confirmTitle}>Welcome to {scannedVendor.name}!</Text>
             <Text style={styles.confirmMessage}>
@@ -895,19 +634,18 @@ const VendorCheckin = ({ route, navigation }) => {
               {/* Option 2: Manual check-in (with penalty message if QR is available) */}
               <Button
                 title={scannedVendor.hasQrCode ? 
-                  "Check In without QR (Half Points)" : 
+                  "Manual Check-in" : 
                   "Check In"}
                 icon={{
                   name: "eco",
                   type: "material",
                   size: 20,
-                  color: scannedVendor.hasQrCode ? "#666" : "white"
+                  color: "white"
                 }}
-                type={scannedVendor.hasQrCode ? "outline" : "solid"}
+                type={scannedVendor.hasQrCode ? "solid" : "solid"}
                 onPress={() => handleManualCheckin(scannedVendor.hasQrCode)}
-                buttonStyle={scannedVendor.hasQrCode ? styles.skipQrButton : styles.confirmButton}
+                buttonStyle={scannedVendor.hasQrCode ? styles.manualButton : styles.confirmButton}
                 containerStyle={styles.buttonContainer}
-                titleStyle={scannedVendor.hasQrCode ? { color: '#666' } : undefined}
               />
             </View>
 
@@ -916,7 +654,7 @@ const VendorCheckin = ({ route, navigation }) => {
               <View style={styles.qrInfoContainer}>
                 <Icon name="emoji-emotions" type="material" color="#4CAF50" size={20} />
                 <Text style={styles.qrInfoText}>
-                  Full points for scanning QR, half points for skipping it. QR scans help us improve the app experience for everyone!
+                  QR scans help us improve the app experience for everyone! Both options give you full points.
                 </Text>
               </View>
             )}
@@ -974,101 +712,125 @@ const VendorCheckin = ({ route, navigation }) => {
                 </Card>
               </View>
             </Modal>
-          </View>
+          </ScrollView>
         )}
       </SafeAreaView>
     );
   }
   
-  // Show QR scanner
+  // Show QR scanner or permission screens
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.scannerContainer}>
-        {hasPermission && !scannedVendor && (
-          <View style={styles.scannerContainer}>
-            {__DEV__ || !Camera ? (
-              // Development mockup or fallback if Camera is not available
-              <View style={styles.mockScannerContainer}>
-                <Text style={styles.mockTitle}>QR Scanner (Dev Mode)</Text>
+      {hasPermission === null ? (
+        <View style={styles.centeredContainer}>
+          <ActivityIndicator size="large" color="#4CAF50" />
+          <Text style={styles.permissionText}>Requesting camera permission...</Text>
+        </View>
+      ) : hasPermission === false ? (
+        <View style={styles.centeredContainer}>
+          <Icon name="camera-off" type="material" size={64} color="#F44336" />
+          <Text style={styles.permissionText}>
+            Camera permission is required to scan check-in QR codes.
+          </Text>
+          <Button
+            title="Open Settings"
+            onPress={() => {
+              if (Platform.OS === 'ios') {
+                Linking.openURL('app-settings:');
+              } else {
+                Linking.openSettings();
+              }
+            }}
+            buttonStyle={styles.permissionButton}
+            containerStyle={styles.buttonContainer}
+          />
+          <Button
+            title="Manual Check-in"
+            onPress={() => {
+              // Show manual check-in options
+              Alert.alert(
+                'Manual Check-in',
+                'Would you like to enter a vendor ID manually?',
+                [
+                  {
+                    text: 'Enter Vendor ID',
+                    onPress: () => {
+                      // For now, just use a default vendor ID
+                      handleDirectCheckin('10975');
+                    }
+                  },
+                  {
+                    text: 'Cancel',
+                    style: 'cancel',
+                    onPress: handleCancel
+                  }
+                ]
+              );
+            }}
+            buttonStyle={styles.manualButton}
+            containerStyle={styles.buttonContainer}
+          />
+          <Button
+            title="Go Back"
+            type="outline"
+            onPress={handleCancel}
+            containerStyle={styles.buttonContainer}
+          />
+        </View>
+      ) : (
+        <View style={styles.scannerContainer}>
+          {/* Use QRScanner component instead of BarCodeScanner */}
+          <QRScanner
+            onScan={(data) => {
+              // Handle the scanned data
+              try {
+                Logger.info(LogCategory.CHECKIN, 'QR code scanned', { data });
                 
-                <Button
-                  title="Simulate Scan for vendor 1"
-                  onPress={() => handleBarCodeScanned({ 
-                    type: 'QR', 
-                    data: 'lootsganja://checkin/v1' 
-                  })}
-                  buttonStyle={styles.scanButton}
-                  containerStyle={styles.buttonContainer}
-                />
+                // Try to parse the QR code data
+                let vendorId;
+                try {
+                  const qrData = JSON.parse(data);
+                  vendorId = qrData.vendorId;
+                } catch (e) {
+                  // If parsing fails, try to extract vendor ID from string
+                  const match = data.match(/vendorId[=:]["']?(\d+)/);
+                  if (match && match[1]) {
+                    vendorId = match[1];
+                  } else if (/^\d+$/.test(data)) {
+                    // If data is just a number, assume it's a vendor ID
+                    vendorId = data;
+                  }
+                }
                 
-                <Button
-                  title="Simulate Scan for vendor 2"
-                  onPress={() => handleBarCodeScanned({ 
-                    type: 'QR', 
-                    data: 'lootsganja://checkin/v2' 
-                  })}
-                  buttonStyle={styles.scanButton}
-                  containerStyle={styles.buttonContainer}
-                />
-                
-                <Button
-                  title="Cancel"
-                  type="outline"
-                  onPress={handleCancel}
-                  containerStyle={styles.buttonContainer}
-                />
-              </View>
-            ) : (
-              // Production camera implementation using our safe CameraConstants
-              <View style={styles.scanner}>
-                {/* This is a safer way to render the Camera */}
-                <Camera
-                  style={StyleSheet.absoluteFill}
-                  onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
-                  // Use our safe CameraConstants instead of direct Camera.Constants
-                  type={CameraConstants.Type.back}
-                  flashMode={torchOn ? CameraConstants.FlashMode.torch : CameraConstants.FlashMode.off}
-                >
-                  <View style={styles.overlay}>
-                    <View style={styles.unfilled} />
-                    <View style={styles.row}>
-                      <View style={styles.unfilled} />
-                      <View style={styles.scanner} />
-                      <View style={styles.unfilled} />
-                    </View>
-                    <View style={styles.unfilled} />
-                  </View>
-                  
-                  <View style={styles.instructionsContainer}>
-                    <Text style={styles.instructionsText}>
-                      Scan the QR code at the dispensary to check in
-                    </Text>
-                  </View>
-                  
-                  <TouchableOpacity 
-                    style={styles.torchButton}
-                    onPress={toggleTorch}
-                  >
-                    <Icon 
-                      name={torchOn ? "flash-on" : "flash-off"} 
-                      type="material" 
-                      color="#FFFFFF" 
-                      size={24} 
-                    />
-                  </TouchableOpacity>
-                  
-                  <Button
-                    title="Cancel"
-                    onPress={handleCancel}
-                    buttonStyle={styles.cancelButton}
-                    containerStyle={styles.cancelButtonContainer}
-                  />
-                </Camera>
-              </View>
-            )}
-          </View>
-        )}
-      </View>
+                if (vendorId) {
+                  // Process the vendor ID
+                  handleDirectCheckin(vendorId);
+                } else {
+                  throw new Error('No vendor ID found in QR code');
+                }
+              } catch (error) {
+                Logger.error(LogCategory.VENDOR, 'Error processing QR code', { error });
+                Alert.alert(
+                  'QR Code Error',
+                  'Could not process the QR code. Please try again or use manual check-in.',
+                  [
+                    {
+                      text: 'Try Again',
+                      onPress: () => setScanned(false)
+                    },
+                    {
+                      text: 'Manual Check-in',
+                      onPress: () => handleManualCheckin(false)
+                    }
+                  ]
+                );
+              }
+            }}
+            onClose={handleCancel}
+            urlPrefix=""
+          />
+        </View>
+      )}
     </SafeAreaView>
   );
 };
@@ -1076,7 +838,271 @@ const VendorCheckin = ({ route, navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: '#f5f5f5',
+  },
+  scannerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cameraContainer: {
+    width: '100%',
+    height: '100%',
+    position: 'relative',
+  },
+  camera: {
+    flex: 1,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scannerFrame: {
+    width: width * 0.7,
+    height: width * 0.7,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+  },
+  scannerControls: {
+    position: 'absolute',
+    bottom: 30,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingHorizontal: 20,
+  },
+  controlButton: {
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    borderRadius: 30,
+    width: 60,
+    height: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  vendorInfoContainer: {
+    padding: 20,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    margin: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  vendorName: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  vendorAddress: {
+    fontSize: 16,
+    color: '#666',
+    marginBottom: 5,
+  },
+  vendorDistance: {
+    fontSize: 14,
+    color: '#4CAF50',
+    marginBottom: 15,
+  },
+  dealContainer: {
+    marginTop: 10,
+    padding: 15,
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4CAF50',
+  },
+  dealTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 5,
+  },
+  dealDescription: {
+    fontSize: 14,
+    color: '#666',
+  },
+  buttonContainer: {
+    marginTop: 20,
+    width: '100%',
+  },
+  confirmButton: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  scanQrButton: {
+    backgroundColor: '#2196F3',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  manualButton: {
+    backgroundColor: '#4CAF50',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  cancelButton: {
+    backgroundColor: '#f44336',
+    borderRadius: 8,
+    paddingVertical: 12,
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  modalText: {
+    fontSize: 16,
+    marginBottom: 20,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  modalButtonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  modalButton: {
+    flex: 1,
+    margin: 5,
+  },
+  loadingContainer: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#4CAF50',
+  },
+  infoText: {
+    textAlign: 'center',
+    marginTop: 20,
+    color: '#666',
+    fontSize: 14,
+  },
+  locationVerificationContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 20,
+    width: '90%',
+    alignSelf: 'center',
+  },
+  locationVerificationTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  locationVerificationText: {
+    fontSize: 14,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  locationVerificationButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  scannerFallback: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000',
+    width: '100%',
+    padding: 20,
+  },
+  scannerFallbackText: {
+    color: '#fff',
+    fontSize: 18,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  permissionButton: {
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 30,
+  },
+  scanner: {
+    flex: 1,
+    width: '100%',
+  },
+  unfilled: {
+    flex: 1,
+  },
+  row: {
+    flexDirection: 'row',
+    height: width * 0.7,
+  },
+  instructionsContainer: {
+    position: 'absolute',
+    bottom: 100,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  instructionsText: {
+    color: '#fff',
+    fontSize: 16,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    padding: 10,
+    borderRadius: 5,
+    textAlign: 'center',
+  },
+  torchButton: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 30,
+    width: 60,
+    height: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cancelButtonContainer: {
+    position: 'absolute',
+    bottom: 40,
+    alignSelf: 'center',
+    width: 150,
+  },
+  qrInfoContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F8E9',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 16,
+    alignItems: 'flex-start',
+  },
+  qrInfoText: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#4CAF50',
+    lineHeight: 20,
+  },
+  checkinOptionsContainer: {
+    width: '100%',
+    alignItems: 'center',
+    padding: 20,
   },
   centeredContainer: {
     flex: 1,
@@ -1092,304 +1118,77 @@ const styles = StyleSheet.create({
     color: '#666666',
     marginBottom: 20,
   },
-  permissionButton: {
-    backgroundColor: '#4CAF50',
-  },
-  buttonContainer: {
-    width: '80%',
-    marginBottom: 20,
-  },
-  scannerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  scanner: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-  },
-  overlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,0)',
-  },
-  unfilled: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  row: {
-    flexDirection: 'row',
-    height: 300,
-  },
-  instructionsContainer: {
-    position: 'absolute',
-    bottom: 150,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  instructionsText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+  permissionSubtext: {
     textAlign: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 24,
-    paddingVertical: 8,
-    borderRadius: 8,
-    overflow: 'hidden',
+    fontSize: 14,
+    color: '#999999',
+    marginTop: 8,
   },
-  torchButton: {
+  errorDetails: {
+    textAlign: 'center',
+    fontSize: 14,
+    color: '#F44336',
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  permissionButtonsContainer: {
+    width: '80%',
+    marginTop: 20,
+  },
+  scannerFallbackSubtext: {
+    color: '#DDDDDD',
+    fontSize: 14,
+    marginTop: 8,
+    marginBottom: 20,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  scanTarget: {
+    width: width * 0.7,
+    height: width * 0.7,
+    borderWidth: 0,
+    position: 'relative',
+  },
+  scanCorner: {
     position: 'absolute',
-    top: 80,
-    right: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 30,
-    width: 50,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 20,
+    height: 20,
+    borderColor: '#FFFFFF',
+    borderWidth: 3,
+    top: 0,
+    left: 0,
   },
-  scanAgainButton: {
+  rescanButton: {
     backgroundColor: '#4CAF50',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+    marginTop: 15,
   },
-  scanAgainButtonContainer: {
+  rescanButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  manualCheckInButton: {
     position: 'absolute',
     bottom: 100,
-  },
-  cancelButton: {
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
-  cancelButtonContainer: {
-    position: 'absolute',
-    bottom: 40,
-    width: 120,
-  },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    marginTop: 16,
-  },
-  confirmContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#FFFFFF',
-  },
-  confirmTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginTop: 20,
-    marginBottom: 10,
-    textAlign: 'center',
-    color: '#4CAF50',
-  },
-  confirmMessage: {
-    fontSize: 16,
-    textAlign: 'center',
-    color: '#666666',
-    marginBottom: 20,
-  },
-  confirmVendor: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333333',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  confirmAddress: {
-    fontSize: 16,
-    color: '#666666',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  rewardContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E8F5E9',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginBottom: 20,
-  },
-  rewardText: {
-    marginLeft: 8,
-    fontSize: 16,
-    color: '#4CAF50',
-    fontWeight: 'bold',
-  },
-  confirmButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
-    paddingVertical: 12,
-  },
-  shareButton: {
-    borderColor: '#4CAF50',
-    borderRadius: 8,
-    paddingVertical: 12,
-  },
-  checkinOptionsContainer: {
-    marginBottom: 20,
-    width: '100%',
-  },
-  infoBox: {
-    flexDirection: 'row',
-    backgroundColor: '#F1F8E9', 
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 16,
-    alignItems: 'flex-start',
-  },
-  infoText: {
-    flex: 1,
-    marginLeft: 8,
-    fontSize: 14,
-    color: '#4CAF50',
-    lineHeight: 20,
-  },
-  scanQrButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
-    paddingVertical: 12,
-  },
-  skipQrButton: {
-    borderColor: '#666',
-    borderRadius: 8,
-    paddingVertical: 12,
-  },
-  imHereButton: {
-    backgroundColor: '#4CAF50',
-    borderRadius: 8,
-    paddingVertical: 12,
-  },
-  qrInfoContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#F1F8E9',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 16,
-    width: '80%',
-    alignItems: 'flex-start',
-  },
-  qrInfoText: {
-    flex: 1,
-    marginLeft: 8,
-    fontSize: 14,
-    color: '#4CAF50',
-    lineHeight: 20,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalCard: {
-    width: '85%',
-    borderRadius: 10,
-    padding: 20,
-    margin: 0,
-  },
-  modalIcon: {
     alignSelf: 'center',
-    marginBottom: 10,
+    backgroundColor: 'rgba(76, 175, 80, 0.8)',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
   },
-  modalTitle: {
-    fontSize: 18,
+  manualCheckInText: {
+    color: '#FFFFFF',
     fontWeight: 'bold',
-    textAlign: 'center',
-  },
-  modalText: {
-    textAlign: 'center',
-    marginBottom: 20,
     fontSize: 16,
-    lineHeight: 22,
   },
-  modalButtonsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  modalButtonContainer: {
-    width: '48%',
-  },
-  modalCancelButton: {
-    borderColor: '#999',
-  },
-  modalConfirmButton: {
-    backgroundColor: '#4CAF50',
-  },
-  buttonsContainer: {
-    width: '80%',
-    marginTop: 20,
-    marginBottom: 15,
-    gap: 15, // Adds space between buttons
-  },
-  devModeButton: {
+  manualButtonContainer: {
     position: 'absolute',
-    top: 80,
-    left: 20,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 30,
-    width: 50,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  mockScannerContainer: {
-    flex: 1,
-    backgroundColor: '#000000',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  mockTitle: {
-    fontSize: 24,
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    marginBottom: 30,
-  },
-  scanButton: {
-    backgroundColor: '#4CAF50',
-    paddingHorizontal: 40,
-  },
-  cameraPlaceholder: {
-    fontSize: 16,
-    color: '#FFFFFF',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  simulateScanButton: {
-    backgroundColor: '#4CAF50',
-    marginBottom: 10,
-  },
-  mockInputContainer: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    padding: 15,
-    borderRadius: 8,
-    width: '100%',
-    marginBottom: 20,
-  },
-  vendorPicker: {
-    height: 50,
-    width: '100%',
-    color: 'white',
-    marginTop: 10,
-  },
-  mockNote: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 14,
-    marginTop: 20,
+    bottom: 100,
+    alignSelf: 'center',
+    width: 200,
   },
 });
 

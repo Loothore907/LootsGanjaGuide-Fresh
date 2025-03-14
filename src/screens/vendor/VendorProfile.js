@@ -9,7 +9,9 @@ import {
   Linking,
   Image,
   Animated,
-  Share
+  Share,
+  Platform,
+  Alert
 } from 'react-native';
 import { 
   Text, 
@@ -27,15 +29,32 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
 import serviceProvider from '../../services/ServiceProvider';
+import { dealCacheService } from '../../services/DealCacheService';
 
 const VendorProfile = ({ route, navigation }) => {
   const { vendorId } = route.params;
   const { state, dispatch } = useAppState();
   const [isLoading, setIsLoading] = useState(true);
   const [vendor, setVendor] = useState(null);
+  const [vendorDeals, setVendorDeals] = useState({
+    today: [],
+    everyday: [],
+    birthday: []
+  });
   const [tabIndex, setTabIndex] = useState(0);
   const [isFavorite, setIsFavorite] = useState(false);
+  const [isCreatingJourney, setIsCreatingJourney] = useState(false);
   const scrollY = useRef(new Animated.Value(0)).current;
+  
+  // Hide the default React Navigation header
+  useEffect(() => {
+    navigation.setOptions({
+      headerShown: false
+    });
+  }, [navigation]);
+  
+  // Check if we're viewing this vendor profile during an active journey
+  const isInActiveJourney = state.journey && state.journey.isActive;
   
   // Check if vendor is in favorites
   useEffect(() => {
@@ -48,6 +67,57 @@ const VendorProfile = ({ route, navigation }) => {
   useEffect(() => {
     loadVendorData();
   }, [vendorId]);
+
+  // New effect to load deals from cache if not available directly on vendor
+  useEffect(() => {
+    if (vendor && vendor.id) {
+      loadDealsForVendor();
+    }
+  }, [vendor]);
+  
+  const loadDealsForVendor = async () => {
+    // First check if deals are available directly on the vendor object
+    const directDeals = {
+      today: getCurrentDayDeals() || [],
+      everyday: vendor.deals?.everyday ? 
+        (Array.isArray(vendor.deals.everyday) ? vendor.deals.everyday : [vendor.deals.everyday]) : [],
+      birthday: vendor.deals?.birthday ? 
+        (Array.isArray(vendor.deals.birthday) ? vendor.deals.birthday : [vendor.deals.birthday]) : []
+    };
+    
+    // If we already have deals, use them
+    if (directDeals.today.length || directDeals.everyday.length || directDeals.birthday.length) {
+      console.log('Using direct deals from vendor object:', {
+        today: directDeals.today.length,
+        everyday: directDeals.everyday.length,
+        birthday: directDeals.birthday.length
+      });
+      setVendorDeals(directDeals);
+      return;
+    }
+    
+    // Otherwise try to get deals from the cache service
+    try {
+      if (dealCacheService) {
+        const today = getDayOfWeek();
+        const cachedDeals = {
+          today: dealCacheService.getDailyDealsForVendor(vendor, today) || [],
+          everyday: dealCacheService.getEverydayDealsForVendor(vendor) || [],
+          birthday: dealCacheService.getBirthdayDealsForVendor(vendor) || []
+        };
+        
+        console.log('Deals from cache service:', {
+          today: cachedDeals.today.length,
+          everyday: cachedDeals.everyday.length,
+          birthday: cachedDeals.birthday.length
+        });
+        
+        setVendorDeals(cachedDeals);
+      }
+    } catch (error) {
+      console.log('Error loading deals from cache:', error);
+    }
+  };
   
   const loadVendorData = async () => {
     setIsLoading(true);
@@ -60,6 +130,23 @@ const VendorProfile = ({ route, navigation }) => {
         if (!vendorData) {
           throw new Error(`Vendor with ID ${vendorId} not found`);
         }
+        
+        // Add debug logging to identify other potential null values
+        console.log('VendorProfile - loaded vendor data:', {
+          id: vendorData.id,
+          name: vendorData.name,
+          hasRating: vendorData.rating !== undefined && vendorData.rating !== null,
+          rating: vendorData.rating,
+          hasDistance: vendorData.distance !== undefined && vendorData.distance !== null,
+          distance: vendorData.distance,
+          hasLocation: !!vendorData.location,
+          locationKeys: vendorData.location ? Object.keys(vendorData.location) : [],
+          hasCoordinates: vendorData.location && vendorData.location.coordinates,
+          coordinateTypes: vendorData.location && vendorData.location.coordinates ? 
+            `lat: ${typeof vendorData.location.coordinates.latitude}, lng: ${typeof vendorData.location.coordinates.longitude}` : 'N/A',
+          hasDeals: !!vendorData.deals,
+          dealTypes: vendorData.deals ? Object.keys(vendorData.deals) : []
+        });
         
         setVendor(vendorData);
         
@@ -277,7 +364,7 @@ const VendorProfile = ({ route, navigation }) => {
   // Animation for header
   const headerHeight = scrollY.interpolate({
     inputRange: [0, 100],
-    outputRange: [200, 60],
+    outputRange: [120, 60],
     extrapolate: 'clamp'
   });
   
@@ -319,6 +406,138 @@ const VendorProfile = ({ route, navigation }) => {
     return null;
   };
   
+  // New function to handle starting a journey with a specific deal
+  const handleStartJourneyWithDeal = async (deal, dealType) => {
+    setIsCreatingJourney(true);
+    
+    try {
+      // If there's an active journey, confirm that the user wants to replace it
+      if (isInActiveJourney) {
+        Alert.alert(
+          'Replace Active Journey?',
+          'You have an active journey in progress. Starting a new journey will replace it. Continue?',
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => setIsCreatingJourney(false) },
+            { text: 'Continue', onPress: () => createNewJourney(deal, dealType) }
+          ]
+        );
+      } else {
+        // No active journey, create a new one directly
+        await createNewJourney(deal, dealType);
+      }
+    } catch (error) {
+      Logger.error(LogCategory.JOURNEY, 'Error starting journey from vendor profile', { error, vendorId });
+      Alert.alert('Error', 'Failed to create journey. Please try again.');
+      setIsCreatingJourney(false);
+    }
+  };
+  
+  // Helper function to create a new journey
+  const createNewJourney = async (deal, dealType) => {
+    try {
+      // End any existing journey
+      if (isInActiveJourney) {
+        dispatch(AppActions.endJourney());
+      }
+      
+      // Create an optimized route with just this vendor
+      const route = await serviceProvider.createOptimizedRoute([vendor.id], {
+        startLocation: state.user.location || {
+          latitude: 61.217381, // Default to Anchorage if no user location
+          longitude: -149.863129
+        },
+        dealType: dealType
+      });
+      
+      if (!route || !route.vendors || route.vendors.length === 0) {
+        throw new Error('Failed to create route with vendor');
+      }
+      
+      // Start journey in app state
+      dispatch(AppActions.startJourney({
+        dealType: dealType,
+        vendors: route.vendors,
+        maxDistance: state.dealFilters.maxDistance || 25,
+        totalVendors: route.vendors.length
+      }));
+      
+      // Update route information
+      dispatch(AppActions.updateRoute({
+        coordinates: route.vendors.map(v => v.location.coordinates),
+        totalDistance: route.totalDistance,
+        estimatedTime: route.estimatedTime
+      }));
+      
+      // Navigate to the route preview screen
+      navigation.reset({
+        index: 0,
+        routes: [
+          { name: 'MainTabs' },
+          { name: 'RoutePreview' }
+        ],
+      });
+      
+      Logger.info(LogCategory.JOURNEY, 'Started journey from vendor profile', { 
+        vendorId, 
+        dealType,
+        vendorCount: route.vendors.length 
+      });
+    } catch (error) {
+      Logger.error(LogCategory.JOURNEY, 'Error creating journey', { error, vendorId });
+      Alert.alert('Error', 'Failed to create journey. Please try again.');
+    } finally {
+      setIsCreatingJourney(false);
+    }
+  };
+  
+  // Updated render functions for deal cards with journey buttons
+  
+  // Render a deal card with journey button
+  const renderDealCard = (deal, index, dealType, keyPrefix) => {
+    const dealTitle = typeof deal === 'string' ? deal : (deal.title || 'Deal Available');
+    const dealDescription = typeof deal !== 'string' && deal.description ? deal.description : null;
+    const dealDiscount = typeof deal !== 'string' && deal.discount ? deal.discount : null;
+    
+    return (
+      <View key={`${keyPrefix}-${index}`} style={styles.dealCard}>
+        {dealType === 'birthday' && (
+          <View style={styles.dealHeader}>
+            <View style={styles.birthdayBadge}>
+              <Icon name="cake" type="material" color="#fff" size={14} />
+              <Text style={styles.birthdayBadgeText}>Birthday</Text>
+            </View>
+          </View>
+        )}
+        
+        <Text style={styles.dealTitle}>{dealTitle}</Text>
+        
+        {dealDescription && (
+          <Text style={styles.dealDescription}>{dealDescription}</Text>
+        )}
+        
+        <View style={styles.dealFooter}>
+          {dealDiscount && (
+            <View style={[styles.discountBadge, dealType === 'birthday' ? {backgroundColor: '#FF4081'} : {}]}>
+              <Text style={styles.discountText}>
+                {typeof dealDiscount === 'number' ? `${dealDiscount}%` : dealDiscount}
+              </Text>
+            </View>
+          )}
+          
+          <Button
+            title={isInActiveJourney ? "Switch to This Deal" : "Start Journey"}
+            icon={{ name: 'navigation', type: 'material', color: 'white', size: 14 }}
+            buttonStyle={[styles.journeyButton, dealType === 'birthday' ? {backgroundColor: '#FF4081'} : {}]}
+            titleStyle={styles.journeyButtonText}
+            onPress={() => handleStartJourneyWithDeal(deal, dealType)}
+            loading={isCreatingJourney}
+            disabled={isCreatingJourney}
+          />
+        </View>
+      </View>
+    );
+  };
+  
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -344,23 +563,11 @@ const VendorProfile = ({ route, navigation }) => {
   
   return (
     <SafeAreaView style={styles.container}>
-      <Animated.View style={[styles.header, { height: headerHeight }]}>
-        <Animated.Image
-          source={{ uri: vendor.bannerUrl || 'https://via.placeholder.com/400x200/4CAF50/FFFFFF?text=No+Image' }}
-          style={[styles.banner, { opacity: headerOpacity }]}
-        />
-        <View style={styles.logoContainer}>
-          <Image
-            source={{ uri: vendor.logoUrl || 'https://via.placeholder.com/100x100/4CAF50/FFFFFF?text=Logo' }}
-            style={styles.logo}
-          />
-        </View>
-        <Animated.View style={[styles.headerTitle, { opacity: headerTitleOpacity }]}>
-          <Text style={styles.headerTitleText}>{vendor.name}</Text>
-        </Animated.View>
+      <View style={styles.fixedHeader}>
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
           <Icon name="arrow-back" type="material" color="#FFFFFF" size={24} />
         </TouchableOpacity>
+        <Text style={styles.headerTitle}>Vendor Details</Text>
         <TouchableOpacity style={styles.favoriteButton} onPress={toggleFavorite}>
           <Icon
             name={isFavorite ? "favorite" : "favorite-border"}
@@ -369,29 +576,193 @@ const VendorProfile = ({ route, navigation }) => {
             size={24}
           />
         </TouchableOpacity>
-      </Animated.View>
+      </View>
       
-      <Animated.ScrollView
-        style={styles.scrollView}
-        onScroll={Animated.event(
-          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-          { useNativeDriver: false }
-        )}
-        scrollEventThrottle={16}
-      >
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.vendorInfo}>
           <Text style={styles.vendorName}>{vendor.name}</Text>
           <View style={styles.ratingContainer}>
             <Icon name="star" type="material" color="#FFD700" size={20} />
-            <Text style={styles.ratingText}>{vendor.rating.toFixed(1)}</Text>
+            <Text style={styles.ratingText}>
+              {vendor.rating ? vendor.rating.toFixed(1) : 'No Rating'}
+            </Text>
             {vendor.isPartner && (
               <View style={styles.partnerBadge}>
                 <Text style={styles.partnerText}>PARTNER</Text>
               </View>
             )}
           </View>
+          
+          {/* Location Info */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Location</Text>
+            <View style={styles.locationContainer}>
+              <Icon name="place" type="material" color="#4CAF50" size={20} />
+              <Text style={styles.locationText}>
+                {vendor.location?.address || 'Address not available'}
+              </Text>
+            </View>
+            
+            {vendor.distance !== undefined && vendor.distance !== null && (
+              <Text style={styles.distanceText}>
+                {vendor.distance.toFixed(1)} miles away
+              </Text>
+            )}
+            
+            <Button
+              title={isInActiveJourney ? "Continue Journey" : "Directions"}
+              icon={{ name: 'directions', type: 'material', color: 'white', size: 18 }}
+              buttonStyle={styles.actionButton}
+              onPress={isInActiveJourney ? () => navigation.navigate('RouteMapView') : openMaps}
+              containerStyle={styles.buttonContainer}
+            />
+          </View>
+          
+          {/* Today's Deals - Improved formatting */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Today's Deals</Text>
+            
+            {vendorDeals.today.length > 0 ? (
+              vendorDeals.today.map((deal, index) => 
+                renderDealCard(deal, index, 'daily', 'today')
+              )
+            ) : (
+              <Text style={styles.noDealsText}>No deals available today</Text>
+            )}
+          </View>
+          
+          {/* Debug button - hidden in production */}
+          {!vendorDeals.today.length && vendor.id && __DEV__ && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Deals from Cache</Text>
+              {console.log('Checking for deals in cache for vendor ID:', vendor.id)}
+              <Button
+                title="Find All Deals"
+                icon={{ name: 'search', type: 'material', color: 'white', size: 18 }}
+                buttonStyle={styles.actionButton}
+                onPress={() => {
+                  try {
+                    // This is just a debug button to check what deals are available
+                    if (typeof dealCacheService !== 'undefined') {
+                      console.log('Deal cache loaded:', dealCacheService.isCacheLoaded());
+                      const todayDeals = dealCacheService.getDailyDealsForVendor(vendor, getDayOfWeek());
+                      const everydayDeals = dealCacheService.getEverydayDealsForVendor(vendor);
+                      const birthdayDeals = dealCacheService.getBirthdayDealsForVendor(vendor);
+                      console.log('Cache deals found:', {
+                        today: todayDeals.length,
+                        everyday: everydayDeals.length,
+                        birthday: birthdayDeals.length
+                      });
+                    } else {
+                      console.log('Deal cache service not available');
+                    }
+                  } catch (error) {
+                    console.log('Error checking deals:', error);
+                  }
+                }}
+                containerStyle={styles.buttonContainer}
+              />
+            </View>
+          )}
+          
+          {/* Hours Info */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Hours</Text>
+            <View style={styles.hoursContainer}>
+              <View style={styles.statusBadge}>
+                <Text style={[styles.statusText, { color: isCurrentlyOpen() ? '#4CAF50' : '#F44336' }]}>
+                  {isCurrentlyOpen() ? 'Open Now' : 'Closed Now'}
+                </Text>
+              </View>
+              <Text style={styles.todayHours}>Today: {getTodayHours()}</Text>
+            </View>
+            
+            {/* Display full week hours */}
+            {['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map(day => (
+              <View key={day} style={styles.hourRow}>
+                <Text style={styles.dayName}>{day.charAt(0).toUpperCase() + day.slice(1)}</Text>
+                <Text style={styles.hourTime}>{formatHours(day)}</Text>
+              </View>
+            ))}
+          </View>
+          
+          {/* Contact Info */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Contact</Text>
+            <View style={styles.contactActions}>
+              {vendor.contact?.phone && (
+                <Button
+                  title="Call"
+                  icon={{ name: 'phone', type: 'material', color: 'white', size: 18 }}
+                  buttonStyle={styles.actionButton}
+                  onPress={callVendor}
+                  containerStyle={styles.buttonContainer}
+                />
+              )}
+              
+              {vendor.contact?.email && (
+                <Button
+                  title="Email"
+                  icon={{ name: 'email', type: 'material', color: 'white', size: 18 }}
+                  buttonStyle={styles.actionButton}
+                  onPress={emailVendor}
+                  containerStyle={styles.buttonContainer}
+                />
+              )}
+              
+              <Button
+                title="Share"
+                icon={{ name: 'share', type: 'material', color: 'white', size: 18 }}
+                buttonStyle={styles.actionButton}
+                onPress={shareVendor}
+                containerStyle={styles.buttonContainer}
+              />
+            </View>
+            
+            {/* Social Media */}
+            {(vendor.contact?.social?.instagram || vendor.contact?.social?.facebook) && (
+              <View style={styles.socialContainer}>
+                {vendor.contact?.social?.instagram && (
+                  <TouchableOpacity style={styles.socialButton} onPress={openInstagram}>
+                    <SocialIcon type="instagram" light raised={false} />
+                    <Text style={styles.socialText}>Instagram</Text>
+                  </TouchableOpacity>
+                )}
+                
+                {vendor.contact?.social?.facebook && (
+                  <TouchableOpacity style={styles.socialButton} onPress={openFacebook}>
+                    <SocialIcon type="facebook" light raised={false} />
+                    <Text style={styles.socialText}>Facebook</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </View>
+          
+          {/* Everyday Deals - Updated styling */}
+          {vendorDeals.everyday.length > 0 && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Everyday Deals</Text>
+              {vendorDeals.everyday.map((deal, index) => 
+                renderDealCard(deal, index, 'everyday', 'everyday')
+              )}
+            </View>
+          )}
+          
+          {/* Birthday Deals - Updated styling */}
+          {vendorDeals.birthday.length > 0 && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Birthday Deals</Text>
+              <Text style={styles.birthdayDisclaimer}>
+                * Birthday deals are only available during your birthday month with valid ID
+              </Text>
+              {vendorDeals.birthday.map((deal, index) => 
+                renderDealCard(deal, index, 'birthday', 'birthday')
+              )}
+            </View>
+          )}
         </View>
-      </Animated.ScrollView>
+      </ScrollView>
     </SafeAreaView>
   );
 };
@@ -401,69 +772,53 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#fff',
   },
-  header: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 1,
-  },
-  banner: {
-    width: '100%',
-    height: '100%',
-  },
-  logoContainer: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    zIndex: 2,
-  },
-  logo: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+  fixedHeader: {
+    height: 60,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 15,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
   },
   headerTitle: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    right: 10,
-    zIndex: 2,
-  },
-  headerTitleText: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     color: '#fff',
+    flex: 1,
+    textAlign: 'center',
   },
   backButton: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    zIndex: 2,
+    padding: 8,
+    borderRadius: 20,
   },
   favoriteButton: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    zIndex: 2,
+    padding: 8,
+    borderRadius: 20,
   },
   scrollView: {
     flex: 1,
+    paddingTop: 15,
   },
   vendorInfo: {
-    padding: 20,
+    padding: 15,
   },
   vendorName: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   ratingContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 12,
   },
   ratingText: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
     marginLeft: 5,
   },
@@ -477,6 +832,159 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
     color: '#fff',
+  },
+  section: {
+    marginTop: 15,
+    marginBottom: 15,
+    backgroundColor: '#f9f9f9',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 12,
+    color: '#333',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    paddingBottom: 5,
+  },
+  locationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  locationText: {
+    fontSize: 16,
+    marginLeft: 10,
+    flex: 1,
+    flexWrap: 'wrap',
+  },
+  distanceText: {
+    fontSize: 16,
+    marginTop: 5,
+    marginBottom: 15,
+    color: '#4CAF50',
+    fontWeight: '500',
+  },
+  hoursContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  statusBadge: {
+    padding: 5,
+    borderRadius: 5,
+    backgroundColor: '#f0f0f0',
+  },
+  statusText: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  todayHours: {
+    fontSize: 16,
+    marginLeft: 10,
+    fontWeight: '500',
+  },
+  hourRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingHorizontal: 5,
+  },
+  dayName: {
+    fontSize: 15,
+    width: 100,
+  },
+  hourTime: {
+    fontSize: 15,
+    color: '#555',
+  },
+  contactActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 15,
+  },
+  actionButton: {
+    backgroundColor: '#4CAF50',
+    paddingVertical: 8,
+    paddingHorizontal: 15,
+  },
+  buttonContainer: {
+    margin: 5,
+  },
+  socialContainer: {
+    flexDirection: 'row',
+    marginTop: 10,
+    justifyContent: 'center',
+  },
+  socialButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 10,
+  },
+  socialText: {
+    fontSize: 14,
+  },
+  dealCard: {
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    padding: 12,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 1,
+    elevation: 2,
+  },
+  dealTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+    color: '#333',
+  },
+  dealDescription: {
+    fontSize: 14,
+    color: '#555',
+    marginBottom: 10,
+    lineHeight: 20,
+  },
+  dealFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 5,
+  },
+  discountBadge: {
+    backgroundColor: '#4CAF50',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+  },
+  discountText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  noDealsText: {
+    fontSize: 16,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    color: '#777',
+    padding: 20,
+  },
+  birthdayDisclaimer: {
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: '#666',
+    marginBottom: 15,
+    textAlign: 'center',
   },
   loadingContainer: {
     flex: 1,
@@ -500,6 +1008,37 @@ const styles = StyleSheet.create({
   },
   errorButton: {
     backgroundColor: '#4CAF50',
+  },
+  dealHeader: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  birthdayBadge: {
+    backgroundColor: '#FF4081',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  birthdayBadgeText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginLeft: 4,
+  },
+  journeyButton: {
+    backgroundColor: '#4CAF50',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 4,
+    marginTop: 8,
+  },
+  journeyButtonText: {
+    fontSize: 12,
+    fontWeight: 'bold',
   },
 });
 

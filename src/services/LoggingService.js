@@ -34,6 +34,7 @@ class LoggingService {
     this.isInitialized = false;
     this.shouldPersistLogs = true; // Set to false in production if not needed
     this.shouldLogToConsole = __DEV__; // Only log to console in development
+    this.debugMode = false; // Only show debug logs if this is true
   }
 
   /**
@@ -63,34 +64,48 @@ class LoggingService {
 
   /**
    * Log a message with the specified level and category
-   * @param {LogLevel} level - Severity level
-   * @param {LogCategory} category - Feature category
+   * @param {string} level - Log level from LogLevel enum
+   * @param {string} category - Log category from LogCategory enum
    * @param {string} message - Log message
-   * @param {Object} [data] - Optional data to include with the log
+   * @param {Object} data - Additional data to log
    */
   log(level, category, message, data = null) {
+    // Create log entry
     const timestamp = new Date().toISOString();
     const logEntry = {
       timestamp,
       level,
       category,
       message,
-      data: data ? JSON.stringify(data) : null
+      data: data || {}
     };
-
+    
     // Add to in-memory logs
-    this.logs.push(logEntry);
+    this.logs.unshift(logEntry);
+    
+    // Trim logs if exceeding max size
     if (this.logs.length > this.maxLogSize) {
-      this.logs.shift(); // Remove oldest log if exceeding max size
+      this.logs = this.logs.slice(0, this.maxLogSize);
     }
-
+    
     // Log to console in development
     if (this.shouldLogToConsole) {
+      // Skip DEBUG logs unless debug mode is enabled
+      if (level === LogLevel.DEBUG && !this.debugMode) {
+        return;
+      }
+      
       const consoleMethod = this._getConsoleMethod(level);
-      consoleMethod(`[${timestamp}] [${level}] [${category}] ${message}`, data || '');
+      const formattedMessage = `[${timestamp}] [${level}] [${category}] ${message}`;
+      
+      if (data) {
+        consoleMethod(formattedMessage, data);
+      } else {
+        consoleMethod(formattedMessage);
+      }
     }
-
-    // Persist logs if configured
+    
+    // Persist logs if enabled
     if (this.shouldPersistLogs) {
       this._persistLogs();
     }

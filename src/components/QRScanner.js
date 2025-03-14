@@ -10,7 +10,6 @@ import {
   Platform,
   Linking
 } from 'react-native';
-import { BarCodeScanner } from 'expo-barcode-scanner';
 import { Camera } from 'expo-camera';
 import { Icon } from '@rneui/themed';
 import { Logger, LogCategory } from '../services/LoggingService';
@@ -84,40 +83,15 @@ const QRScanner = ({
       }
     }
     
-    // Validate QR code format
-    if (data.startsWith(urlPrefix)) {
-      // Extract vendor ID or other data
-      // For vendor check-ins, format might be: lootsganja://checkin/{vendorId}
-      const payload = data.replace(urlPrefix, '');
-      
-      Logger.info(LogCategory.CHECKIN, 'Valid QR code scanned', {
-        type,
-        payload,
-        hasPrefix: true
-      });
-      
-      // Call onScan with the extracted data
-      if (onScan) {
-        onScan(payload);
-      }
-    } else {
-      // Invalid QR code format
-      Logger.warn(LogCategory.CHECKIN, 'Invalid QR code scanned', {
-        type,
-        data,
-        expectedPrefix: urlPrefix
-      });
-      
-      Alert.alert(
-        'Invalid QR Code',
-        'This doesn\'t appear to be a valid Loot\'s Ganja Guide check-in code.',
-        [
-          { 
-            text: 'Try Again', 
-            onPress: () => setScanned(false) 
-          }
-        ]
-      );
+    // Always call onScan with the data, validation will be handled by parent
+    Logger.info(LogCategory.CHECKIN, 'QR code scanned', {
+      type,
+      data
+    });
+    
+    // Call onScan with the data
+    if (onScan) {
+      onScan(data);
     }
   };
   
@@ -189,6 +163,9 @@ const QRScanner = ({
             ? Camera.Constants.FlashMode.torch 
             : Camera.Constants.FlashMode.off
         }
+        barCodeScannerSettings={{
+          barCodeTypes: ['qr']
+        }}
       >
         <View style={styles.overlay}>
           {/* Dark overlay with transparent scanner area */}

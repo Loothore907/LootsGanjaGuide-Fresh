@@ -14,9 +14,8 @@ import {
   doc,
   Timestamp
 } from 'firebase/firestore';
-import { isValidDeal, isValidSpecialDeal, DealType, DayOfWeek } from '../types/Schema';
+import { isValidDeal, isValidSpecialDeal, isValidMultiDayDeal, DealType, DayOfWeek } from '../types/Schema';
 import VendorRepository from './VendorRepository';
-import { vendorCacheService } from '../services/VendorCacheService';
 
 /**
  * Repository for deal-related Firestore operations
@@ -60,30 +59,51 @@ class DealRepository extends BaseRepository {
       switch (options.type) {
         case 'birthday':
           deals = await this.getBirthdayDeals(options);
+          Logger.info(LogCategory.DEALS, `Got ${deals.length} birthday deals`);
           break;
         case 'daily':
           deals = await this.getDailyDeals(options.day || this.getCurrentDayOfWeek(), options);
+          Logger.info(LogCategory.DEALS, `Got ${deals.length} daily deals for ${options.day || this.getCurrentDayOfWeek()}`);
+          break;
+        case 'multi_day':
+          deals = await this.getMultiDayDeals(options.day || this.getCurrentDayOfWeek(), options);
+          Logger.info(LogCategory.DEALS, `Got ${deals.length} multi-day deals for ${options.day || this.getCurrentDayOfWeek()}`);
           break;
         case 'special':
           deals = await this.getSpecialDeals(options);
+          Logger.info(LogCategory.DEALS, `Got ${deals.length} special deals`);
+          break;
+        case 'everyday':
+          deals = await this.getEverydayDeals(options);
+          Logger.info(LogCategory.DEALS, `Got ${deals.length} everyday deals`);
           break;
         default:
           // If no specific type, get deals from all categories
           const birthdayDeals = await this.getBirthdayDeals(options);
           const dailyDeals = await this.getDailyDeals(options.day || this.getCurrentDayOfWeek(), options);
+          const multiDayDeals = await this.getMultiDayDeals(options.day || this.getCurrentDayOfWeek(), options);
           const specialDeals = await this.getSpecialDeals(options);
+          const everydayDeals = await this.getEverydayDeals(options);
           
-          deals = [...birthdayDeals, ...dailyDeals, ...specialDeals];
+          deals = [...birthdayDeals, ...dailyDeals, ...multiDayDeals, ...specialDeals, ...everydayDeals];
+          
+          Logger.info(LogCategory.DEALS, 'Got deals from all categories', {
+            birthdayDeals: birthdayDeals.length,
+            dailyDeals: dailyDeals.length,
+            multiDayDeals: multiDayDeals.length,
+            specialDeals: specialDeals.length,
+            everydayDeals: everydayDeals.length,
+            totalDeals: deals.length
+          });
       }
       
       // Apply common post-processing
       const processedDeals = await this.processDeals(deals, options);
       
-      Logger.info(LogCategory.DEALS, `Retrieved ${processedDeals.length} deals`);
       return processedDeals;
     } catch (error) {
-      Logger.error(LogCategory.DEALS, 'Error getting deals', { error });
-      throw error;
+      Logger.error(LogCategory.DEALS, 'Error getting all deals', { error });
+      return [];
     }
   }
 
@@ -191,6 +211,18 @@ class DealRepository extends BaseRepository {
                       day: featuredData.day
                     };
                   }
+                } else if (featuredData.dealType === 'everyday' && 
+                           featuredData.dealId) {
+                  // For everyday deals, we need to get the deal directly from the deals collection
+                  const dealSnap = await getDoc(doc(this.collectionRef, featuredData.dealId));
+                  
+                  if (dealSnap.exists()) {
+                    dealData = { 
+                      id: dealSnap.id, 
+                      ...dealSnap.data(),
+                      vendorName: vendor.name
+                    };
+                  }
                 }
               }
             }
@@ -262,116 +294,78 @@ class DealRepository extends BaseRepository {
   }
 
   /**
-   * Get daily deals for a specific day
-   * @param {string} day - Day of week (lowercase)
-   * @param {Object} options - Filter options
-   * @returns {Promise<Array>} - Array of daily deals
-   */
-  async getDailyDeals(day, options = {}) {
-    try {
-      Logger.info(LogCategory.DEALS, 'Getting daily deals', { day, options });
-      
-      // Validate day parameter
-      if (!Object.values(DayOfWeek).includes(day)) {
-        throw new Error(`Invalid day: ${day}. Must be one of: ${Object.values(DayOfWeek).join(', ')}`);
-      }
-      
-      // Get vendors from cache
-      const vendors = vendorCacheService.getAllVendors({
-        userLocation: options.userLocation
-      });
-      
-      // Extract daily deals from vendors
-      const dailyDeals = [];
-      
-      vendors.forEach(vendor => {
-        // Skip inactive vendors
-        if (vendor.status !== 'Active-Operating') {
-          return;
-        }
-
-        // Check if vendor has daily deals for this day
-        if (vendor.deals?.daily?.[day] && Array.isArray(vendor.deals.daily[day])) {
-          vendor.deals.daily[day].forEach((deal, index) => {
-            // Skip invalid deals
-            if (!deal.description || !deal.discount) {
-              return;
-            }
-            
-            dailyDeals.push({
-              id: `${vendor.id}-${day}-${index}`,
-              title: deal.title || deal.description,
-              description: deal.description,
-              discount: deal.discount,
-              restrictions: deal.restrictions || [],
-              redemptionFrequency: deal.redemptionFrequency || 'once_per_day',
-              vendorId: vendor.id,
-              vendorName: vendor.name,
-              vendorAddress: vendor.location?.address || 'Address unavailable',
-              vendorCoordinates: vendor.location?.coordinates,
-              dealType: 'daily',
-              day,
-              vendorDistance: vendor.distance || null,
-              vendorIsPartner: vendor.isPartner || false,
-              isActive: deal.isActive !== false
-            });
-          });
-        }
-      });
-
-      // Process deals with common filters
-      return this.processDeals(dailyDeals, options);
-    } catch (error) {
-      Logger.error(LogCategory.DEALS, 'Error getting daily deals', { error, day });
-      throw error;
-    }
-  }
-
-  /**
    * Get birthday deals
    * @param {Object} options - Filter options
    * @returns {Promise<Array>} - Array of birthday deals
    */
   async getBirthdayDeals(options = {}) {
     try {
-      Logger.info(LogCategory.DEALS, 'Getting birthday deals', { options });
+      // Create query for birthday deals
+      const birthdayQuery = query(
+        this.collectionRef,
+        where('dealType', '==', 'birthday'),
+        where('isActive', '==', true)
+      );
       
-      // Get vendors from cache
-      const vendors = vendorCacheService.getAllVendors({
-        userLocation: options.userLocation
+      // Execute query
+      const querySnapshot = await getDocs(birthdayQuery);
+      
+      // Process results
+      const deals = [];
+      querySnapshot.forEach(doc => {
+        deals.push({ id: doc.id, ...doc.data() });
       });
       
-      // Extract birthday deals from vendors
-      const birthdayDeals = vendors
-        .filter(vendor => 
-          vendor.status === 'Active-Operating' && 
-          vendor.deals && 
-          vendor.deals.birthday)
-        .map(vendor => ({
-          id: `${vendor.id}-birthday`,
-          title: vendor.deals.birthday.title || vendor.deals.birthday.description || 'Birthday Special',
-          description: vendor.deals.birthday.description,
-          discount: vendor.deals.birthday.discount,
-          restrictions: vendor.deals.birthday.restrictions || [],
-          redemptionFrequency: vendor.deals.birthday.redemptionFrequency || 'once_per_year',
-          vendorId: vendor.id,
-          vendorName: vendor.name,
-          vendorAddress: vendor.location?.address || 'Address unavailable',
-          vendorCoordinates: vendor.location?.coordinates,
-          dealType: 'birthday',
-          vendorDistance: vendor.distance || null,
-          vendorIsPartner: vendor.isPartner || false,
-          isActive: vendor.deals.birthday.isActive !== false
-        }));
-
-      // Process deals with common filters
-      return this.processDeals(birthdayDeals, options);
+      Logger.info(LogCategory.DEALS, `Found ${deals.length} birthday deals in Firestore`);
+      
+      // Process deals with vendor information
+      return await this.processBirthdayDeals(deals, options);
     } catch (error) {
       Logger.error(LogCategory.DEALS, 'Error getting birthday deals', { error });
-      throw error;
+      return [];
     }
   }
-
+  
+  /**
+   * Get daily deals for a specific day
+   * @param {string} day - Day of week
+   * @param {Object} options - Filter options
+   * @returns {Promise<Array>} - Array of daily deals
+   */
+  async getDailyDeals(day, options = {}) {
+    try {
+      // Validate day
+      if (!Object.values(DayOfWeek).includes(day)) {
+        throw new Error(`Invalid day: ${day}`);
+      }
+      
+      // Create query for daily deals
+      const dailyQuery = query(
+        this.collectionRef,
+        where('dealType', '==', 'daily'),
+        where('day', '==', day),
+        where('isActive', '==', true)
+      );
+      
+      // Execute query
+      const querySnapshot = await getDocs(dailyQuery);
+      
+      // Process results
+      const deals = [];
+      querySnapshot.forEach(doc => {
+        deals.push({ id: doc.id, ...doc.data() });
+      });
+      
+      Logger.info(LogCategory.DEALS, `Found ${deals.length} daily deals for ${day} in Firestore`);
+      
+      // Process deals with vendor information
+      return await this.processDailyDeals(deals, options);
+    } catch (error) {
+      Logger.error(LogCategory.DEALS, `Error getting daily deals for ${day}`, { error });
+      return [];
+    }
+  }
+  
   /**
    * Get special deals
    * @param {Object} options - Filter options
@@ -379,62 +373,111 @@ class DealRepository extends BaseRepository {
    */
   async getSpecialDeals(options = {}) {
     try {
-      Logger.info(LogCategory.DEALS, 'Getting special deals', { options });
+      // Create query for special deals
+      const specialQuery = query(
+        this.collectionRef,
+        where('dealType', '==', 'special'),
+        where('isActive', '==', true)
+      );
       
-      // Get vendors from cache
-      const vendors = vendorCacheService.getAllVendors({
-        userLocation: options.userLocation
+      // Execute query
+      const querySnapshot = await getDocs(specialQuery);
+      
+      // Process results
+      const deals = [];
+      querySnapshot.forEach(doc => {
+        deals.push({ id: doc.id, ...doc.data() });
       });
       
-      // Extract special deals from vendors
-      const now = new Date().toISOString();
-      const specialDeals = [];
+      Logger.info(LogCategory.DEALS, `Found ${deals.length} special deals in Firestore`);
       
-      vendors.forEach(vendor => {
-        // Skip inactive vendors
-        if (vendor.status !== 'Active-Operating') {
-          return;
-        }
-        
-        if (vendor.deals?.special && Array.isArray(vendor.deals.special)) {
-          vendor.deals.special.forEach((deal, index) => {
-            // Skip invalid deals
-            if (!deal.title || !deal.description || !deal.discount) {
-              return;
-            }
-            
-            // Skip if not active (if activeOnly is true)
-            if (options.activeOnly && 
-                ((deal.startDate && deal.startDate > now) || 
-                 (deal.endDate && deal.endDate < now))) {
-              return;
-            }
-            
-            specialDeals.push({
-              id: `${vendor.id}-special-${index}`,
-              title: deal.title,
-              description: deal.description,
-              discount: deal.discount,
-              restrictions: deal.restrictions || [],
-              startDate: deal.startDate,
-              endDate: deal.endDate,
-              redemptionFrequency: deal.redemptionFrequency || 'unlimited',
-              vendorId: vendor.id,
-              vendorName: vendor.name,
-              dealType: 'special',
-              vendorDistance: vendor.distance || null,
-              vendorIsPartner: vendor.isPartner || false,
-              isActive: deal.isActive !== false
-            });
-          });
-        }
-      });
-
-      // Process deals with common filters
-      return this.processDeals(specialDeals, options);
+      // Process deals with vendor information
+      return await this.processSpecialDeals(deals, options);
     } catch (error) {
       Logger.error(LogCategory.DEALS, 'Error getting special deals', { error });
-      throw error;
+      return [];
+    }
+  }
+  
+  /**
+   * Get everyday deals
+   * @param {Object} options - Filter options
+   * @returns {Promise<Array>} - Array of everyday deals
+   */
+  async getEverydayDeals(options = {}) {
+    try {
+      // Create query for everyday deals
+      const everydayQuery = query(
+        this.collectionRef,
+        where('dealType', '==', 'everyday'),
+        where('isActive', '==', true)
+      );
+      
+      // Execute query
+      const querySnapshot = await getDocs(everydayQuery);
+      
+      // Process results
+      const deals = [];
+      querySnapshot.forEach(doc => {
+        deals.push({ id: doc.id, ...doc.data() });
+      });
+      
+      Logger.info(LogCategory.DEALS, `Found ${deals.length} everyday deals in Firestore`);
+      
+      // Process deals with vendor information
+      return await this.processDailyDeals(deals, options);
+    } catch (error) {
+      Logger.error(LogCategory.DEALS, 'Error getting everyday deals', { error });
+      return [];
+    }
+  }
+
+  /**
+   * Get multi-day deals for a specific day
+   * @param {string} day - Day of week to filter by
+   * @param {Object} options - Filter options
+   * @returns {Promise<Array>} - Array of multi-day deals
+   */
+  async getMultiDayDeals(day, options = {}) {
+    try {
+      // Validate day
+      if (!Object.values(DayOfWeek).includes(day)) {
+        throw new Error(`Invalid day: ${day}`);
+      }
+      
+      // Create query for multi-day deals
+      const multiDayQuery = query(
+        this.collectionRef,
+        where('dealType', '==', 'multi_day'),
+        where('isActive', '==', true)
+      );
+      
+      // Execute query
+      const querySnapshot = await getDocs(multiDayQuery);
+      
+      // Process results
+      const deals = [];
+      querySnapshot.forEach(doc => {
+        const dealData = doc.data();
+        
+        // Only add valid deals for the current day
+        if (isValidMultiDayDeal(dealData) && 
+            dealData.activeDays && 
+            Array.isArray(dealData.activeDays) && 
+            dealData.activeDays.includes(day)) {
+          deals.push({ id: doc.id, ...dealData });
+        } else if (!isValidMultiDayDeal(dealData)) {
+          Logger.warn(LogCategory.DEALS, `Skipping invalid multi-day deal`, { dealId: doc.id });
+        }
+      });
+      
+      Logger.info(LogCategory.DEALS, `Found ${deals.length} multi-day deals for ${day} in Firestore`);
+      
+      // Process deals with vendor information
+      return await this.processDailyDeals(deals, options);
+    } catch (error) {
+      Logger.error(LogCategory.DEALS, `Error getting multi-day deals for ${day}`, { error });
+      return [];
     }
   }
 
@@ -612,25 +655,36 @@ class DealRepository extends BaseRepository {
     try {
       let processedDeals = [...deals];
       
+      Logger.info(LogCategory.DEALS, `Processing ${processedDeals.length} deals with options`, { 
+        options,
+        dealTypes: this.countDealsByType(processedDeals)
+      });
+      
       // Apply category filter if provided
       if (options.category) {
+        const beforeCount = processedDeals.length;
         processedDeals = processedDeals.filter(deal => 
           deal.category === options.category
         );
+        Logger.info(LogCategory.DEALS, `Category filter removed ${beforeCount - processedDeals.length} deals`);
       }
       
       // Apply max distance filter
       if (options.maxDistance && typeof options.maxDistance === 'number') {
+        const beforeCount = processedDeals.length;
         processedDeals = processedDeals.filter(deal => 
           !deal.vendorDistance || deal.vendorDistance <= options.maxDistance
         );
+        Logger.info(LogCategory.DEALS, `Distance filter removed ${beforeCount - processedDeals.length} deals`);
       }
       
       // Apply active filter - default to including only active deals
       if (options.activeOnly !== false) {
+        const beforeCount = processedDeals.length;
         processedDeals = processedDeals.filter(deal => 
           deal.isActive !== false
         );
+        Logger.info(LogCategory.DEALS, `Active filter removed ${beforeCount - processedDeals.length} deals`);
       }
       
       // Sort by partner status, then by closest
@@ -639,7 +693,7 @@ class DealRepository extends BaseRepository {
         if (a.vendorIsPartner && !b.vendorIsPartner) return -1;
         if (!a.vendorIsPartner && b.vendorIsPartner) return 1;
         
-        // Then by distance if available
+        // Then by distance (if available)
         if (a.vendorDistance && b.vendorDistance) {
           return a.vendorDistance - b.vendorDistance;
         }
@@ -647,16 +701,47 @@ class DealRepository extends BaseRepository {
         return 0;
       });
       
-      // Limit results
-      if (options.limit && options.limit > 0) {
+      // Apply limit if provided
+      if (options.limit && typeof options.limit === 'number') {
+        const beforeCount = processedDeals.length;
         processedDeals = processedDeals.slice(0, options.limit);
+        Logger.info(LogCategory.DEALS, `Limit filter reduced from ${beforeCount} to ${processedDeals.length} deals`);
       }
+      
+      Logger.info(LogCategory.DEALS, `Returning ${processedDeals.length} processed deals`, {
+        dealTypes: this.countDealsByType(processedDeals)
+      });
       
       return processedDeals;
     } catch (error) {
       Logger.error(LogCategory.DEALS, 'Error processing deals', { error });
-      throw error;
+      return deals;
     }
+  }
+  
+  /**
+   * Count deals by type
+   * @param {Array} deals - Array of deals
+   * @returns {Object} - Counts by deal type
+   */
+  countDealsByType(deals) {
+    const counts = {
+      birthday: 0,
+      daily: 0,
+      everyday: 0,
+      special: 0,
+      unknown: 0
+    };
+    
+    deals.forEach(deal => {
+      if (deal.dealType && counts[deal.dealType] !== undefined) {
+        counts[deal.dealType]++;
+      } else {
+        counts.unknown++;
+      }
+    });
+    
+    return counts;
   }
 
   /**
@@ -667,6 +752,213 @@ class DealRepository extends BaseRepository {
     const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
     const dayIndex = new Date().getDay();
     return days[dayIndex];
+  }
+
+  /**
+   * Enhance deal with vendor information
+   * @param {Object} deal - Deal object
+   * @returns {Promise<Object>} - Enhanced deal object
+   */
+  async enhanceDealWithVendorInfo(deal) {
+    try {
+      // Skip if no vendor ID
+      if (!deal.vendorId) {
+        return deal;
+      }
+      
+      // Check if this is a mock vendor ID (from the sample data script)
+      const mockVendorIds = ["10001", "10002", "10003", "10004", "10005", 
+                            "10006", "10007", "10008", "10009", "10010"];
+      
+      if (mockVendorIds.includes(deal.vendorId.toString())) {
+        // For mock vendor IDs, create a placeholder vendor name based on the ID
+        return {
+          ...deal,
+          vendorName: `Sample Vendor ${deal.vendorId}`,
+          vendorDistance: 1.0, // Default distance
+          vendorLocation: {
+            address: "123 Sample St, Anchorage, AK",
+            coordinates: {
+              latitude: 61.2181,
+              longitude: -149.9003
+            }
+          }
+        };
+      }
+      
+      // Get vendor information for real vendor IDs
+      const vendor = await this.vendorRepository.getById(deal.vendorId);
+      
+      // If vendor not found, just return the deal without vendor info
+      if (!vendor) {
+        // Use debug level instead of info to reduce console noise
+        Logger.debug(LogCategory.DEALS, `No vendor found for deal`, { 
+          dealId: deal.id, 
+          vendorId: deal.vendorId,
+          dealType: deal.dealType
+        });
+        return {
+          ...deal,
+          vendorName: 'Unknown Vendor',
+          vendorDistance: null,
+          vendorLocation: null
+        };
+      }
+      
+      // Add vendor information to deal
+      return {
+        ...deal,
+        vendorName: vendor.name,
+        vendorDistance: vendor.distance || null,
+        vendorLocation: vendor.location || null
+      };
+    } catch (error) {
+      Logger.error(LogCategory.DEALS, 'Error enhancing deal with vendor info', { 
+        error, 
+        dealId: deal.id,
+        vendorId: deal.vendorId
+      });
+      return deal;
+    }
+  }
+
+  /**
+   * Process birthday deals
+   * @param {Array} deals - Raw birthday deals
+   * @param {Object} options - Processing options
+   * @returns {Promise<Array>} - Processed birthday deals
+   */
+  async processBirthdayDeals(deals, options = {}) {
+    try {
+      const processedDeals = [];
+      
+      for (const deal of deals) {
+        try {
+          // Skip invalid deals
+          if (!isValidDeal(deal)) {
+            Logger.warn(LogCategory.DEALS, `Skipping invalid birthday deal`, { dealId: deal.id });
+            continue;
+          }
+          
+          // Get vendor information
+          const enhancedDeal = await this.enhanceDealWithVendorInfo(deal);
+          
+          // Add to processed deals
+          processedDeals.push(enhancedDeal);
+        } catch (dealError) {
+          Logger.warn(LogCategory.DEALS, `Error processing birthday deal`, { 
+            error: dealError, 
+            dealId: deal.id 
+          });
+        }
+      }
+      
+      return processedDeals;
+    } catch (error) {
+      Logger.error(LogCategory.DEALS, 'Error processing birthday deals', { error });
+      return [];
+    }
+  }
+
+  /**
+   * Process daily deals
+   * @param {Array} deals - Raw daily deals
+   * @param {Object} options - Processing options
+   * @param {string[]} [options.categories] - Array of categories to filter by
+   * @returns {Promise<Array>} - Processed daily deals
+   */
+  async processDailyDeals(deals, options = {}) {
+    try {
+      const processedDeals = [];
+      
+      // Log the filtering options
+      Logger.info(LogCategory.DEALS, 'Processing daily deals with options', { 
+        dealCount: deals.length,
+        categories: options.categories,
+        maxDistance: options.maxDistance
+      });
+      
+      for (const deal of deals) {
+        try {
+          // Skip invalid deals
+          if (!isValidDeal(deal)) {
+            Logger.warn(LogCategory.DEALS, `Skipping invalid daily deal`, { dealId: deal.id });
+            continue;
+          }
+          
+          // Get vendor information
+          const enhancedDeal = await this.enhanceDealWithVendorInfo(deal);
+          
+          // Filter by categories if specified
+          if (options.categories && options.categories.length > 0) {
+            // If deal has no category, assign to 'misc'
+            const dealCategory = enhancedDeal.category || 'misc';
+            
+            // Check if the deal's category is in the selected categories
+            // Also include deals marked as 'everyday' if that category is selected
+            const categoryMatch = options.categories.includes(dealCategory) || 
+                                 (options.categories.includes('everyday') && enhancedDeal.isEveryday);
+            
+            if (!categoryMatch) {
+              // Skip this deal as it doesn't match the category filter
+              continue;
+            }
+          }
+          
+          // Add to processed deals
+          processedDeals.push(enhancedDeal);
+        } catch (dealError) {
+          Logger.warn(LogCategory.DEALS, `Error processing daily deal`, { 
+            error: dealError, 
+            dealId: deal.id 
+          });
+        }
+      }
+      
+      Logger.info(LogCategory.DEALS, `Processed ${processedDeals.length} daily deals after filtering`);
+      return processedDeals;
+    } catch (error) {
+      Logger.error(LogCategory.DEALS, 'Error processing daily deals', { error });
+      return [];
+    }
+  }
+
+  /**
+   * Process special deals
+   * @param {Array} deals - Raw special deals
+   * @param {Object} options - Processing options
+   * @returns {Promise<Array>} - Processed special deals
+   */
+  async processSpecialDeals(deals, options = {}) {
+    try {
+      const processedDeals = [];
+      
+      for (const deal of deals) {
+        try {
+          // Skip invalid deals
+          if (!isValidSpecialDeal(deal)) {
+            Logger.warn(LogCategory.DEALS, `Skipping invalid special deal`, { dealId: deal.id });
+            continue;
+          }
+          
+          // Get vendor information
+          const enhancedDeal = await this.enhanceDealWithVendorInfo(deal);
+          
+          // Add to processed deals
+          processedDeals.push(enhancedDeal);
+        } catch (dealError) {
+          Logger.warn(LogCategory.DEALS, `Error processing special deal`, { 
+            error: dealError, 
+            dealId: deal.id 
+          });
+        }
+      }
+      
+      return processedDeals;
+    } catch (error) {
+      Logger.error(LogCategory.DEALS, 'Error processing special deals', { error });
+      return [];
+    }
   }
 }
 

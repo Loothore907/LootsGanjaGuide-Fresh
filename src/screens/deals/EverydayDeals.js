@@ -1,4 +1,3 @@
-// src/screens/deals/DailyDeals.js
 import React, { useState, useEffect } from 'react';
 import { 
   View, 
@@ -26,7 +25,7 @@ import { Logger, LogCategory } from '../../services/LoggingService';
 import { handleError, tryCatch } from '../../utils/ErrorHandler';
 import serviceProvider from '../../services/ServiceProvider';
 
-const DailyDeals = ({ navigation }) => {
+const EverydayDeals = ({ navigation }) => {
   const { state, dispatch } = useAppState();
   const [isLoading, setIsLoading] = useState(false);
   const [isCreatingRoute, setIsCreatingRoute] = useState(false);
@@ -34,7 +33,6 @@ const DailyDeals = ({ navigation }) => {
   const [selectedDeals, setSelectedDeals] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [maxDistance, setMaxDistance] = useState(state.dealFilters.maxDistance || 25);
-  const [currentDay, setCurrentDay] = useState(getDayOfWeek());
   const [showCategories, setShowCategories] = useState(false);
   const [sortByValue, setSortByValue] = useState(true);
   
@@ -53,28 +51,8 @@ const DailyDeals = ({ navigation }) => {
     { id: 'cbd', label: 'CBD', icon: 'healing' },
     { id: 'beverages', label: 'Beverages', icon: 'local-drink' },
     { id: 'merchandise', label: 'Merchandise', icon: 'shopping-bag' },
-    { id: 'misc', label: 'Miscellaneous', icon: 'more-horiz' },
-    { id: 'everyday', label: 'Everyday Deals', icon: 'local-offer' }
+    { id: 'misc', label: 'Miscellaneous', icon: 'more-horiz' }
   ];
-  
-  // Days of the week
-  const daysOfWeek = [
-    { id: 'monday', label: 'Mon' },
-    { id: 'tuesday', label: 'Tue' },
-    { id: 'wednesday', label: 'Wed' },
-    { id: 'thursday', label: 'Thu' },
-    { id: 'friday', label: 'Fri' },
-    { id: 'saturday', label: 'Sat' },
-    { id: 'sunday', label: 'Sun' },
-    { id: 'everyday', label: 'All' }
-  ];
-  
-  // Helper function to get current day of week
-  function getDayOfWeek() {
-    const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const today = new Date().getDay();
-    return days[today];
-  }
   
   // Helper to calculate deal value score
   const calculateDealValue = (deal) => {
@@ -112,10 +90,10 @@ const DailyDeals = ({ navigation }) => {
   
   // Load deals on component mount and when filters change
   useEffect(() => {
-    loadDailyDeals();
-  }, [currentDay, selectedCategories, maxDistance, sortByValue]);
+    loadEverydayDeals();
+  }, [selectedCategories, maxDistance, sortByValue]);
   
-  const loadDailyDeals = async () => {
+  const loadEverydayDeals = async () => {
     setIsLoading(true);
     setDeals([]);
     
@@ -127,17 +105,11 @@ const DailyDeals = ({ navigation }) => {
           categories: selectedCategories.length > 0 ? selectedCategories : undefined
         };
         
-        // Get daily deals for the current day
-        const dailyDeals = await serviceProvider.getDailyDeals(currentDay, options);
-        
-        // Get multi-day deals active on the current day
-        const multiDayDeals = await serviceProvider.getMultiDayDeals(currentDay, options);
-        
-        // Combine both deal types
-        const allDeals = [...dailyDeals, ...multiDayDeals];
+        // Get everyday deals
+        const everydayDeals = await serviceProvider.getEverydayDeals(options);
         
         // Sort deals based on user preference
-        const sortedDeals = [...allDeals].sort((a, b) => {
+        const sortedDeals = [...everydayDeals].sort((a, b) => {
           if (sortByValue) {
             // Sort by calculated value score
             return calculateDealValue(b) - calculateDealValue(a);
@@ -149,16 +121,13 @@ const DailyDeals = ({ navigation }) => {
         
         setDeals(sortedDeals);
         
-        Logger.info(LogCategory.DEALS, 'Loaded daily deals', {
-          day: currentDay,
+        Logger.info(LogCategory.DEALS, 'Loaded everyday deals', {
           categories: selectedCategories,
-          dailyDealsCount: dailyDeals.length,
-          multiDayDealsCount: multiDayDeals.length,
-          totalCount: allDeals.length,
+          dealsCount: everydayDeals.length,
           maxDistance,
           sortByValue
         });
-      }, LogCategory.DEALS, 'loading daily deals', true);
+      }, LogCategory.DEALS, 'loading everyday deals', true);
     } catch (error) {
       // Error already logged by tryCatch
     } finally {
@@ -197,10 +166,6 @@ const DailyDeals = ({ navigation }) => {
     setSelectedCategories([]);
   };
   
-  const handleDaySelect = (day) => {
-    setCurrentDay(day);
-  };
-  
   const toggleSortByValue = () => {
     setSortByValue(!sortByValue);
   };
@@ -231,13 +196,13 @@ const DailyDeals = ({ navigation }) => {
             latitude: 61.2176, // Anchorage default
             longitude: -149.8997
           },
-          dealType: 'daily',
+          dealType: 'everyday',
           maxDistance: maxDistance || 25
         });
         
         // Save route data to state
         dispatch(AppActions.startJourney({
-          dealType: 'daily',
+          dealType: 'everyday',
           vendors: route.vendors,
           maxDistance: maxDistance || 25,
           startLocation: route.startLocation
@@ -250,14 +215,14 @@ const DailyDeals = ({ navigation }) => {
           estimatedTime: route.estimatedTime
         }));
         
-        Logger.info(LogCategory.JOURNEY, 'Created daily deal journey', { 
+        Logger.info(LogCategory.JOURNEY, 'Created everyday deal journey', { 
           vendors: route.vendors.length,
           totalDistance: route.totalDistance
         });
         
         // Navigate to route preview
         navigation.navigate('RoutePreview');
-      }, LogCategory.JOURNEY, 'creating daily deal journey', true);
+      }, LogCategory.JOURNEY, 'creating everyday deal journey', true);
     } catch (error) {
       // Error already logged by tryCatch
       Alert.alert('Error', 'Failed to create journey. Please try again.');
@@ -295,7 +260,7 @@ const DailyDeals = ({ navigation }) => {
           // No active journey, create a new one directly
           await createSingleVendorJourney(deal);
         }
-      }, LogCategory.JOURNEY, 'creating direct journey for deal', true);
+      }, LogCategory.JOURNEY, 'creating direct journey for everyday deal', true);
     } catch (error) {
       // Error already logged by tryCatch
       Alert.alert('Error', 'Failed to create journey. Please try again.');
@@ -312,7 +277,7 @@ const DailyDeals = ({ navigation }) => {
         latitude: 61.217381, // Default to Anchorage if no user location
         longitude: -149.863129
       },
-      dealType: 'daily'
+      dealType: 'everyday'
     });
     
     if (!route || !route.vendors || route.vendors.length === 0) {
@@ -321,7 +286,7 @@ const DailyDeals = ({ navigation }) => {
     
     // Start journey in app state
     dispatch(AppActions.startJourney({
-      dealType: 'daily',
+      dealType: 'everyday',
       vendors: route.vendors,
       maxDistance: maxDistance || 25,
       totalVendors: route.vendors.length
@@ -334,7 +299,7 @@ const DailyDeals = ({ navigation }) => {
       estimatedTime: route.estimatedTime
     }));
     
-    Logger.info(LogCategory.JOURNEY, 'Created direct journey for deal', { 
+    Logger.info(LogCategory.JOURNEY, 'Created direct journey for everyday deal', { 
       vendorId: deal.vendorId, 
       dealTitle: deal.title
     });
@@ -389,10 +354,10 @@ const DailyDeals = ({ navigation }) => {
   
   return (
     <SafeAreaView style={styles.container}>
-      {/* Redesigned top deals banner to be less blocky */}
+      {/* Top banner */}
       <View style={styles.topDealsBanner}>
-        <Text style={styles.bannerTitle}>Today's Top Deals</Text>
-        <Text style={styles.bannerSubtitle}>The best cannabis deals in Anchorage</Text>
+        <Text style={styles.bannerTitle}>Everyday Deals</Text>
+        <Text style={styles.bannerSubtitle}>Regular menu offerings from dispensaries</Text>
         <View style={styles.filterButtonsRow}>
           <Button
             title="Browse Categories"
@@ -435,29 +400,6 @@ const DailyDeals = ({ navigation }) => {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>Browse by Category</Text>
-            
-            {/* Days of Week Selector */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.daysRow}>
-              {daysOfWeek.map(day => (
-                <TouchableOpacity
-                  key={day.id}
-                  style={[
-                    styles.dayButton,
-                    currentDay === day.id && styles.selectedDayButton
-                  ]}
-                  onPress={() => handleDaySelect(day.id)}
-                >
-                  <Text 
-                    style={[
-                      styles.dayText,
-                      currentDay === day.id && styles.selectedDayText
-                    ]}
-                  >
-                    {day.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
             
             <Divider width={1} style={{ marginVertical: 10 }} />
             
@@ -513,7 +455,7 @@ const DailyDeals = ({ navigation }) => {
                 containerStyle={{ flex: 2 }}
                 buttonStyle={{ backgroundColor: '#4CAF50' }}
                 onPress={() => {
-                  loadDailyDeals();
+                  loadEverydayDeals();
                   setShowCategories(false);
                 }}
               />
@@ -562,7 +504,7 @@ const DailyDeals = ({ navigation }) => {
         {isLoading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#4CAF50" />
-            <Text style={styles.loadingText}>Loading daily deals...</Text>
+            <Text style={styles.loadingText}>Loading everyday deals...</Text>
           </View>
         ) : (
           <FlatList
@@ -573,8 +515,8 @@ const DailyDeals = ({ navigation }) => {
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Icon name="local-offer" type="material" size={64} color="#CCCCCC" />
-                <Text style={styles.emptyText}>No daily deals found for {currentDay}.</Text>
-                <Text style={styles.emptySubtext}>Try selecting a different day or category.</Text>
+                <Text style={styles.emptyText}>No everyday deals found.</Text>
+                <Text style={styles.emptySubtext}>Try adjusting your category filters.</Text>
               </View>
             }
           />
@@ -601,7 +543,7 @@ const DailyDeals = ({ navigation }) => {
   );
 };
 
-// Update styles with careful, incremental improvements
+// Styles matching the other deal screens
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -673,28 +615,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 15,
     color: '#333',
-  },
-  daysRow: {
-    flexDirection: 'row',
-    marginBottom: 10,
-  },
-  dayButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginRight: 8,
-    borderRadius: 20,
-    backgroundColor: '#F0F0F0',
-  },
-  selectedDayButton: {
-    backgroundColor: '#4CAF50',
-  },
-  dayText: {
-    color: '#666',
-    fontWeight: '500',
-  },
-  selectedDayText: {
-    color: 'white',
-    fontWeight: 'bold',
   },
   categoryHeader: {
     flexDirection: 'row',
@@ -902,4 +822,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default DailyDeals;
+export default EverydayDeals; 

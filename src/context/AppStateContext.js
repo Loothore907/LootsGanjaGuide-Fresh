@@ -1,9 +1,11 @@
 // src/context/AppStateContext.js
-import React, { createContext, useContext, useReducer, useEffect } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Logger, LogCategory } from '../services/LoggingService';
 import { handleError, tryCatch } from '../utils/ErrorHandler';
 import { vendorCacheService } from '../services/VendorCacheService';
+import appInitializer from '../utils/AppInitializer';
+import dataLoaderService from '../services/DataLoaderService';
 
 // Initial state
 const initialState = {
@@ -293,6 +295,53 @@ const AppStateContext = createContext();
 // Provider component
 export function AppStateProvider({ children }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
+  const [loadingState, setLoadingState] = useState('idle'); // 'idle', 'initializing', 'ready', 'error'
+
+  // Initialize app data on startup
+  useEffect(() => {
+    const initializeApp = async () => {
+      setLoadingState('initializing');
+      
+      try {
+        // Initialize app data
+        const success = await appInitializer.initialize();
+        
+        if (success) {
+          setLoadingState('ready');
+          
+          // Save cache to local storage
+          appInitializer.saveToLocalCache();
+        } else {
+          setLoadingState('error');
+          Logger.error(LogCategory.GENERAL, 'App initialization failed');
+        }
+      } catch (error) {
+        setLoadingState('error');
+        Logger.error(LogCategory.GENERAL, 'Error during app initialization', { error });
+      }
+    };
+    
+    initializeApp();
+    
+    // Set up periodic refresh of cache (every 30 minutes)
+    const refreshInterval = setInterval(() => {
+      if (dataLoaderService.needsRefresh(30)) {
+        dataLoaderService.refreshData()
+          .then(success => {
+            if (success) {
+              appInitializer.saveToLocalCache();
+            }
+          })
+          .catch(error => {
+            Logger.error(LogCategory.GENERAL, 'Error refreshing app data', { error });
+          });
+      }
+    }, 10 * 60 * 1000); // Check every 10 minutes
+    
+    return () => {
+      clearInterval(refreshInterval);
+    };
+  }, []);
 
   // Load persisted data on mount
   useEffect(() => {
@@ -441,8 +490,14 @@ export function AppStateProvider({ children }) {
     state.vendorData.cacheStatus
   ]);
 
+  const contextValue = {
+    state,
+    dispatch,
+    loadingState
+  };
+
   return (
-    <AppStateContext.Provider value={{ state, dispatch }}>
+    <AppStateContext.Provider value={contextValue}>
       {children}
     </AppStateContext.Provider>
   );
